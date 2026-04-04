@@ -540,8 +540,7 @@ const HomePage = ({ store, setCurrentPage }) => {
           </div>
           <Separator className="bg-white/10 mb-8" />
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-            <p className="text-[11px] text-white/40">© 2025 SevenGhost</p>
-            <p className="text-[10px] bg-amber-500/20 text-amber-400 px-4 py-2">DEMO MODE</p>
+            <p className="text-[11px] text-white/40">© 2025 SevenGhost. All rights reserved.</p>
           </div>
         </div>
       </footer>
@@ -707,11 +706,10 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
             <div className="bg-white p-8">
               <h2 className="text-[11px] tracking-[0.2em] uppercase mb-6">Payment</h2>
               <div className="space-y-4">
-                {[{ id: 'razorpay', label: 'Pay Online', desc: 'Cards, UPI, Net Banking', icon: CreditCard, mock: true }, { id: 'cod', label: 'Cash on Delivery', desc: 'Pay when you receive', icon: Truck }].map((m) => (
+                {[{ id: 'razorpay', label: 'Pay Online', desc: 'Cards, UPI, Net Banking', icon: CreditCard }, { id: 'cod', label: 'Cash on Delivery', desc: 'Pay when you receive', icon: Truck }].map((m) => (
                   <label key={m.id} className={`flex items-center gap-4 p-5 border cursor-pointer ${paymentMethod === m.id ? 'border-black' : 'border-black/10'}`}>
                     <input type="radio" name="payment" checked={paymentMethod === m.id} onChange={() => setPaymentMethod(m.id)} className="w-4 h-4" />
                     <m.icon size={20} /><div className="flex-1"><p className="text-sm font-medium">{m.label}</p><p className="text-xs text-black/50">{m.desc}</p></div>
-                    {m.mock && <span className="text-[9px] bg-amber-100 text-amber-800 px-2 py-1">MOCK</span>}
                   </label>
                 ))}
               </div>
