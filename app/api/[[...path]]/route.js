@@ -86,7 +86,18 @@ export async function GET(request) {
 
     // GET /api/admin/orders - Get all orders (admin)
     if (segments[0] === 'admin' && segments[1] === 'orders') {
-      const orders = await db.collection('orders').find({}).sort({ createdAt: -1 }).toArray();
+      const status = url.searchParams.get('status');
+      const search = url.searchParams.get('search');
+      let query = {};
+      if (status && status !== 'all') query.status = status;
+      if (search) {
+        query.$or = [
+          { id: { $regex: search, $options: 'i' } },
+          { 'address.name': { $regex: search, $options: 'i' } },
+          { 'address.phone': { $regex: search, $options: 'i' } }
+        ];
+      }
+      const orders = await db.collection('orders').find(query).sort({ createdAt: -1 }).toArray();
       return NextResponse.json({ orders }, { headers: corsHeaders });
     }
 
@@ -94,18 +105,84 @@ export async function GET(request) {
     if (segments[0] === 'admin' && segments[1] === 'stats') {
       const totalOrders = await db.collection('orders').countDocuments();
       const totalProducts = await db.collection('products').countDocuments();
+      const totalUsers = await db.collection('users').countDocuments();
       const orders = await db.collection('orders').find({}).toArray();
       const totalRevenue = orders.reduce((sum, order) => sum + (order.total || 0), 0);
       const pendingOrders = await db.collection('orders').countDocuments({ status: 'pending' });
+      const deliveredOrders = await db.collection('orders').countDocuments({ status: 'delivered' });
+      
+      // Get orders by date for chart (last 7 days)
+      const last7Days = [];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayOrders = orders.filter(o => o.createdAt && o.createdAt.startsWith(dateStr));
+        last7Days.push({
+          date: dateStr,
+          orders: dayOrders.length,
+          revenue: dayOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+        });
+      }
+
+      // Recent orders
+      const recentOrders = await db.collection('orders').find({}).sort({ createdAt: -1 }).limit(5).toArray();
       
       return NextResponse.json({
         stats: {
           totalOrders,
           totalProducts,
+          totalUsers,
           totalRevenue,
-          pendingOrders
+          pendingOrders,
+          deliveredOrders,
+          chartData: last7Days,
+          recentOrders
         }
       }, { headers: corsHeaders });
+    }
+
+    // GET /api/admin/users - Get all users
+    if (segments[0] === 'admin' && segments[1] === 'users') {
+      const users = await db.collection('users').find({}).sort({ createdAt: -1 }).toArray();
+      // Get order count for each user
+      const usersWithOrders = await Promise.all(users.map(async (user) => {
+        const orderCount = await db.collection('orders').countDocuments({ userId: user.id });
+        const userOrders = await db.collection('orders').find({ userId: user.id }).toArray();
+        const totalSpent = userOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+        return { ...user, orderCount, totalSpent };
+      }));
+      return NextResponse.json({ users: usersWithOrders }, { headers: corsHeaders });
+    }
+
+    // GET /api/admin/settings - Get app settings
+    if (segments[0] === 'admin' && segments[1] === 'settings') {
+      let settings = await db.collection('settings').findOne({ id: 'app_settings' });
+      if (!settings) {
+        settings = {
+          id: 'app_settings',
+          supabase: { url: '', anonKey: '', serviceRoleKey: '', configured: false },
+          razorpay: { keyId: '', keySecret: '', configured: false, mode: 'test' },
+          payment: { mode: 'mock', codEnabled: true, razorpayEnabled: false },
+          store: { name: 'SevenGhost', currency: 'INR', freeShippingThreshold: 999 },
+          createdAt: new Date().toISOString()
+        };
+        await db.collection('settings').insertOne(settings);
+      }
+      // Mask sensitive data
+      const maskedSettings = {
+        ...settings,
+        supabase: {
+          ...settings.supabase,
+          anonKey: settings.supabase?.anonKey ? '••••••••' + settings.supabase.anonKey.slice(-8) : '',
+          serviceRoleKey: settings.supabase?.serviceRoleKey ? '••••••••' + settings.supabase.serviceRoleKey.slice(-8) : ''
+        },
+        razorpay: {
+          ...settings.razorpay,
+          keySecret: settings.razorpay?.keySecret ? '••••••••' + settings.razorpay.keySecret.slice(-4) : ''
+        }
+      };
+      return NextResponse.json({ settings: maskedSettings }, { headers: corsHeaders });
     }
 
     // GET /api/wishlist/:userId - Get user's wishlist
@@ -231,14 +308,20 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
       }
 
+      // Get user info
+      const user = await db.collection('users').findOne({ id: userId });
+
       const order = {
         id: uuidv4(),
+        orderNumber: 'SG' + Date.now().toString().slice(-8),
         userId,
+        userEmail: user?.email || 'guest',
+        userName: user?.name || address.name,
         items,
         address,
         paymentMethod,
         total,
-        status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
+        status: 'pending',
         paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed',
         createdAt: new Date().toISOString()
       };
@@ -261,16 +344,21 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Amount required' }, { status: 400, headers: corsHeaders });
       }
 
+      // Check if Razorpay is configured
+      const settings = await db.collection('settings').findOne({ id: 'app_settings' });
+      const isRazorpayLive = settings?.razorpay?.configured && settings?.payment?.mode === 'live';
+
       // Mock Razorpay order response
       const razorpayOrder = {
         id: 'order_' + uuidv4().substring(0, 14),
-        amount: amount * 100, // Razorpay uses paise
+        amount: amount * 100,
         currency,
         status: 'created',
-        created_at: Date.now()
+        created_at: Date.now(),
+        mock: !isRazorpayLive
       };
 
-      return NextResponse.json({ order: razorpayOrder }, { headers: corsHeaders });
+      return NextResponse.json({ order: razorpayOrder, isLive: isRazorpayLive }, { headers: corsHeaders });
     }
 
     // POST /api/payment/verify - Mock payment verification
@@ -280,13 +368,13 @@ export async function POST(request) {
       // Mock verification (always succeeds in mock mode)
       return NextResponse.json({ 
         verified: true, 
-        message: 'Payment verified successfully (MOCK MODE)' 
+        message: 'Payment verified successfully' 
       }, { headers: corsHeaders });
     }
 
     // POST /api/admin/products - Add product (admin)
     if (segments[0] === 'admin' && segments[1] === 'products') {
-      const { name, category, type, price, originalPrice, images, sizes, stock, description } = body;
+      const { name, category, type, price, originalPrice, images, sizes, stock, description, featured } = body;
       if (!name || !category || !type || !price) {
         return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
       }
@@ -296,18 +384,67 @@ export async function POST(request) {
         name,
         category,
         type,
-        price,
-        originalPrice: originalPrice || price,
+        price: parseInt(price),
+        originalPrice: parseInt(originalPrice) || parseInt(price),
         images: images || [],
         sizes: sizes || ['S', 'M', 'L', 'XL'],
-        stock: stock || 0,
+        stock: parseInt(stock) || 0,
         description: description || '',
-        featured: false,
+        featured: featured || false,
         createdAt: new Date().toISOString()
       };
 
       await db.collection('products').insertOne(product);
       return NextResponse.json({ product }, { headers: corsHeaders });
+    }
+
+    // POST /api/admin/settings - Update settings
+    if (segments[0] === 'admin' && segments[1] === 'settings') {
+      const { supabase, razorpay, payment, store } = body;
+      
+      const updateData = { updatedAt: new Date().toISOString() };
+      
+      if (supabase) {
+        updateData.supabase = {
+          url: supabase.url || '',
+          anonKey: supabase.anonKey || '',
+          serviceRoleKey: supabase.serviceRoleKey || '',
+          configured: !!(supabase.url && supabase.anonKey)
+        };
+      }
+      
+      if (razorpay) {
+        updateData.razorpay = {
+          keyId: razorpay.keyId || '',
+          keySecret: razorpay.keySecret || '',
+          configured: !!(razorpay.keyId && razorpay.keySecret),
+          mode: razorpay.mode || 'test'
+        };
+      }
+      
+      if (payment) {
+        updateData.payment = {
+          mode: payment.mode || 'mock',
+          codEnabled: payment.codEnabled !== false,
+          razorpayEnabled: payment.razorpayEnabled || false
+        };
+      }
+      
+      if (store) {
+        updateData.store = {
+          name: store.name || 'SevenGhost',
+          currency: store.currency || 'INR',
+          freeShippingThreshold: parseInt(store.freeShippingThreshold) || 999
+        };
+      }
+
+      await db.collection('settings').updateOne(
+        { id: 'app_settings' },
+        { $set: updateData },
+        { upsert: true }
+      );
+
+      return NextResponse.json({ success: true, message: 'Settings updated' }, { headers: corsHeaders });
     }
 
     // POST /api/wishlist/toggle - Toggle wishlist item
@@ -355,9 +492,14 @@ export async function PUT(request) {
     // PUT /api/admin/products/:id - Update product
     if (segments[0] === 'admin' && segments[1] === 'products' && segments.length === 3) {
       const productId = segments[2];
-      const updateData = { ...body };
+      const updateData = { ...body, updatedAt: new Date().toISOString() };
       delete updateData.id;
       delete updateData._id;
+      
+      // Convert price and stock to integers
+      if (updateData.price) updateData.price = parseInt(updateData.price);
+      if (updateData.originalPrice) updateData.originalPrice = parseInt(updateData.originalPrice);
+      if (updateData.stock) updateData.stock = parseInt(updateData.stock);
 
       const result = await db.collection('products').updateOne(
         { id: productId },
@@ -377,7 +519,7 @@ export async function PUT(request) {
       const orderId = segments[2];
       const { status, paymentStatus } = body;
 
-      const updateData = {};
+      const updateData = { updatedAt: new Date().toISOString() };
       if (status) updateData.status = status;
       if (paymentStatus) updateData.paymentStatus = paymentStatus;
 
