@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,8 +16,43 @@ import {
   ShoppingBag, Heart, Search, Menu, X, User, Package, 
   ChevronRight, Minus, Plus, Trash2, CreditCard, Truck,
   Home, Grid3X3, Settings, LogOut, TrendingUp, DollarSign,
-  ShoppingCart, ArrowRight, Star, Filter, ChevronDown
+  ShoppingCart, ArrowRight, Star, Filter, ChevronDown, ArrowUpRight
 } from 'lucide-react';
+
+// Animation variants
+const fadeInUp = {
+  hidden: { opacity: 0, y: 40 },
+  visible: { 
+    opacity: 1, 
+    y: 0,
+    transition: { duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }
+  }
+};
+
+const fadeIn = {
+  hidden: { opacity: 0 },
+  visible: { 
+    opacity: 1,
+    transition: { duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }
+  }
+};
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.15, delayChildren: 0.1 }
+  }
+};
+
+const scaleIn = {
+  hidden: { opacity: 0, scale: 0.95 },
+  visible: { 
+    opacity: 1, 
+    scale: 1,
+    transition: { duration: 0.5, ease: [0.25, 0.1, 0.25, 1] }
+  }
+};
 
 // ============== STORE CONTEXT ==============
 const useStore = () => {
@@ -28,7 +63,6 @@ const useStore = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load user from localStorage
     const savedUser = localStorage.getItem('sevenghost_user');
     if (savedUser) {
       const userData = JSON.parse(savedUser);
@@ -122,7 +156,7 @@ const useStore = () => {
       const data = await res.json();
       if (data.cart) {
         setCart(data.cart);
-        toast.success('Added to cart!');
+        toast.success('Added to bag');
         return true;
       }
     } catch (e) {
@@ -142,7 +176,7 @@ const useStore = () => {
       const data = await res.json();
       if (data.cart) {
         setCart(data.cart);
-        toast.success('Removed from cart');
+        toast.success('Removed from bag');
       }
     } catch (e) {
       toast.error('Failed to remove item');
@@ -168,7 +202,7 @@ const useStore = () => {
 
   const toggleWishlist = async (productId) => {
     if (!user) {
-      toast.error('Please login to add to wishlist');
+      toast.error('Please login to save items');
       return;
     }
     try {
@@ -181,7 +215,7 @@ const useStore = () => {
       if (data.wishlist) {
         setWishlist(data.wishlist.items);
         if (data.wishlist.items.includes(productId)) {
-          toast.success('Added to wishlist');
+          toast.success('Saved to wishlist');
         } else {
           toast.success('Removed from wishlist');
         }
@@ -200,35 +234,55 @@ const useStore = () => {
 
 // ============== COMPONENTS ==============
 
-// Header Component
+// Premium Header
 const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const filteredProducts = store.products.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   ).slice(0, 5);
 
   return (
-    <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-border">
-      <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16 md:h-20">
+    <motion.header 
+      initial={{ y: -100 }}
+      animate={{ y: 0 }}
+      transition={{ duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
+        scrolled ? 'glass border-b border-black/5' : 'bg-transparent'
+      }`}
+    >
+      <div className="container mx-auto px-6 lg:px-12">
+        <div className="flex items-center justify-between h-20 lg:h-24">
           {/* Mobile Menu */}
           <button 
-            className="md:hidden p-2" 
+            className="lg:hidden p-2 -ml-2" 
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
-            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            <motion.div
+              animate={{ rotate: mobileMenuOpen ? 90 : 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+            </motion.div>
           </button>
 
           {/* Logo */}
           <motion.div 
-            className="flex-1 md:flex-none text-center md:text-left"
+            className="flex-1 lg:flex-none text-center lg:text-left"
             whileHover={{ scale: 1.02 }}
+            transition={{ duration: 0.3 }}
           >
             <h1 
-              className="text-xl md:text-2xl font-bold tracking-wider cursor-pointer"
+              className="text-xl lg:text-2xl font-medium tracking-[0.3em] cursor-pointer font-sans"
               onClick={() => setCurrentPage('home')}
             >
               SEVENGHOST
@@ -236,72 +290,84 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
           </motion.div>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-8">
-            <button 
-              onClick={() => setCurrentPage('home')} 
-              className={`text-sm font-medium tracking-wide hover:text-black/60 transition ${currentPage === 'home' ? 'text-black' : 'text-black/80'}`}
-            >
-              HOME
-            </button>
-            <button 
-              onClick={() => setCurrentPage('shop')} 
-              className={`text-sm font-medium tracking-wide hover:text-black/60 transition ${currentPage === 'shop' ? 'text-black' : 'text-black/80'}`}
-            >
-              SHOP
-            </button>
+          <nav className="hidden lg:flex items-center gap-12">
+            {['home', 'shop'].map((item) => (
+              <button 
+                key={item}
+                onClick={() => setCurrentPage(item)} 
+                className={`relative text-[13px] font-medium tracking-[0.2em] uppercase transition-colors duration-300 ${
+                  currentPage === item ? 'text-black' : 'text-black/60 hover:text-black'
+                }`}
+              >
+                {item}
+                {currentPage === item && (
+                  <motion.div
+                    layoutId="navIndicator"
+                    className="absolute -bottom-1 left-0 right-0 h-[1px] bg-black"
+                    transition={{ duration: 0.3 }}
+                  />
+                )}
+              </button>
+            ))}
             {store.user?.role === 'admin' && (
               <button 
                 onClick={() => setCurrentPage('admin')} 
-                className={`text-sm font-medium tracking-wide hover:text-black/60 transition ${currentPage === 'admin' ? 'text-black' : 'text-black/80'}`}
+                className={`text-[13px] font-medium tracking-[0.2em] uppercase transition-colors duration-300 ${
+                  currentPage === 'admin' ? 'text-black' : 'text-black/60 hover:text-black'
+                }`}
               >
-                ADMIN
+                Admin
               </button>
             )}
           </nav>
 
           {/* Actions */}
-          <div className="flex items-center gap-2 md:gap-4">
+          <div className="flex items-center gap-1 lg:gap-3">
             {/* Search */}
             <div className="relative">
-              <button 
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => setSearchOpen(!searchOpen)} 
-                className="p-2 hover:bg-muted rounded-full transition"
+                className="p-3 hover:bg-black/5 rounded-full transition-colors duration-300"
               >
-                <Search size={20} />
-              </button>
+                <Search size={18} strokeWidth={1.5} />
+              </motion.button>
               <AnimatePresence>
                 {searchOpen && (
                   <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute right-0 top-full mt-2 w-72 bg-white shadow-lg rounded-lg border p-3 z-50"
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute right-0 top-full mt-3 w-80 bg-white shadow-2xl rounded-sm border border-black/10 p-4 z-50"
                   >
                     <Input
-                      placeholder="Search products..."
+                      placeholder="Search collection..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="mb-2"
+                      className="border-0 border-b border-black/10 rounded-none focus-visible:ring-0 text-sm placeholder:text-black/40"
                       autoFocus
                     />
                     {searchQuery && filteredProducts.length > 0 && (
-                      <div className="space-y-2">
+                      <div className="mt-4 space-y-2">
                         {filteredProducts.map(product => (
-                          <button
+                          <motion.button
                             key={product.id}
-                            className="w-full flex items-center gap-3 p-2 hover:bg-muted rounded-lg text-left"
+                            whileHover={{ x: 4 }}
+                            className="w-full flex items-center gap-4 p-2 hover:bg-black/5 rounded-sm text-left transition-colors"
                             onClick={() => {
                               setCurrentPage({ page: 'product', id: product.id });
                               setSearchOpen(false);
                               setSearchQuery('');
                             }}
                           >
-                            <img src={product.images[0]} alt={product.name} className="w-10 h-10 object-cover rounded" />
+                            <img src={product.images[0]} alt={product.name} className="w-12 h-14 object-cover" />
                             <div>
                               <p className="text-sm font-medium">{product.name}</p>
-                              <p className="text-xs text-muted-foreground">₹{product.price}</p>
+                              <p className="text-xs text-black/50">₹{product.price.toLocaleString()}</p>
                             </div>
-                          </button>
+                          </motion.button>
                         ))}
                       </div>
                     )}
@@ -311,86 +377,111 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
             </div>
 
             {/* Wishlist */}
-            <button 
+            <motion.button 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={() => store.user ? setCurrentPage('wishlist') : setShowAuth(true)} 
-              className="p-2 hover:bg-muted rounded-full transition relative"
+              className="p-3 hover:bg-black/5 rounded-full transition-colors duration-300 relative"
             >
-              <Heart size={20} />
+              <Heart size={18} strokeWidth={1.5} />
               {store.wishlist.length > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-black text-white text-[10px] rounded-full flex items-center justify-center">
+                <motion.span 
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[9px] rounded-full flex items-center justify-center font-medium"
+                >
                   {store.wishlist.length}
-                </span>
+                </motion.span>
               )}
-            </button>
+            </motion.button>
 
             {/* Cart */}
             <Sheet>
               <SheetTrigger asChild>
-                <button className="p-2 hover:bg-muted rounded-full transition relative">
-                  <ShoppingBag size={20} />
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="p-3 hover:bg-black/5 rounded-full transition-colors duration-300 relative"
+                >
+                  <ShoppingBag size={18} strokeWidth={1.5} />
                   {store.cart.items.length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-black text-white text-[10px] rounded-full flex items-center justify-center">
+                    <motion.span 
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[9px] rounded-full flex items-center justify-center font-medium"
+                    >
                       {store.cart.items.length}
-                    </span>
+                    </motion.span>
                   )}
-                </button>
+                </motion.button>
               </SheetTrigger>
-              <SheetContent className="w-full sm:max-w-md">
-                <SheetHeader>
-                  <SheetTitle>Your Cart ({store.cart.items.length})</SheetTitle>
+              <SheetContent className="w-full sm:max-w-md border-l-0 shadow-2xl">
+                <SheetHeader className="pb-6 border-b">
+                  <SheetTitle className="text-lg tracking-wide font-sans font-medium">Shopping Bag ({store.cart.items.length})</SheetTitle>
                 </SheetHeader>
-                <div className="mt-6 flex flex-col h-[calc(100vh-200px)]">
+                <div className="mt-6 flex flex-col h-[calc(100vh-220px)]">
                   {store.cart.items.length === 0 ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                      <ShoppingBag size={48} className="mb-4 opacity-50" />
-                      <p>Your cart is empty</p>
+                    <div className="flex-1 flex flex-col items-center justify-center">
+                      <ShoppingBag size={48} className="mb-6 opacity-20" strokeWidth={1} />
+                      <p className="text-black/40 text-sm tracking-wide">Your bag is empty</p>
                     </div>
                   ) : (
                     <>
-                      <div className="flex-1 overflow-auto space-y-4">
-                        {store.cart.items.map(item => (
-                          <div key={item.id} className="flex gap-4 p-3 bg-muted/50 rounded-lg">
-                            <img src={item.image} alt={item.name} className="w-20 h-20 object-cover rounded" />
-                            <div className="flex-1">
-                              <h4 className="font-medium text-sm">{item.name}</h4>
-                              <p className="text-xs text-muted-foreground">Size: {item.size}</p>
-                              <p className="text-sm font-semibold mt-1">₹{item.price}</p>
-                              <div className="flex items-center gap-2 mt-2">
+                      <div className="flex-1 overflow-auto space-y-6 pr-2">
+                        {store.cart.items.map((item, idx) => (
+                          <motion.div 
+                            key={item.id} 
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.1 }}
+                            className="flex gap-4"
+                          >
+                            <div className="w-24 h-32 bg-[#f8f8f8] overflow-hidden">
+                              <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                            </div>
+                            <div className="flex-1 py-1">
+                              <h4 className="font-medium text-sm tracking-wide">{item.name}</h4>
+                              <p className="text-xs text-black/50 mt-1 tracking-wide">Size: {item.size}</p>
+                              <p className="text-sm font-medium mt-2">₹{item.price.toLocaleString()}</p>
+                              <div className="flex items-center gap-3 mt-4">
                                 <button 
                                   onClick={() => store.updateCartQuantity(item.id, item.quantity - 1)}
-                                  className="w-6 h-6 rounded border flex items-center justify-center hover:bg-white"
+                                  className="w-7 h-7 border border-black/20 flex items-center justify-center hover:border-black transition-colors"
                                 >
                                   <Minus size={12} />
                                 </button>
-                                <span className="text-sm w-6 text-center">{item.quantity}</span>
+                                <span className="text-sm w-4 text-center">{item.quantity}</span>
                                 <button 
                                   onClick={() => store.updateCartQuantity(item.id, item.quantity + 1)}
-                                  className="w-6 h-6 rounded border flex items-center justify-center hover:bg-white"
+                                  className="w-7 h-7 border border-black/20 flex items-center justify-center hover:border-black transition-colors"
                                 >
                                   <Plus size={12} />
                                 </button>
                                 <button 
                                   onClick={() => store.removeFromCart(item.id)}
-                                  className="ml-auto text-red-500 hover:text-red-700"
+                                  className="ml-auto text-black/40 hover:text-black transition-colors"
                                 >
                                   <Trash2 size={16} />
                                 </button>
                               </div>
                             </div>
-                          </div>
+                          </motion.div>
                         ))}
                       </div>
-                      <div className="pt-4 border-t mt-4">
-                        <div className="flex justify-between text-lg font-semibold mb-4">
-                          <span>Total</span>
-                          <span>₹{store.cart.total}</span>
+                      <div className="pt-6 border-t mt-6">
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-black/60">Subtotal</span>
+                          <span>₹{store.cart.total.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-sm mb-6">
+                          <span className="text-black/60">Shipping</span>
+                          <span className="text-green-700">Complimentary</span>
                         </div>
                         <Button 
-                          className="w-full" 
-                          size="lg"
+                          className="w-full h-12 text-sm tracking-[0.15em] font-medium rounded-none" 
                           onClick={() => setCurrentPage('checkout')}
                         >
-                          Checkout <ArrowRight className="ml-2" size={18} />
+                          CHECKOUT — ₹{store.cart.total.toLocaleString()}
                         </Button>
                       </div>
                     </>
@@ -403,38 +494,48 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
             {store.user ? (
               <Dialog>
                 <DialogTrigger asChild>
-                  <button className="p-2 hover:bg-muted rounded-full transition">
-                    <User size={20} />
-                  </button>
+                  <motion.button 
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="p-3 hover:bg-black/5 rounded-full transition-colors duration-300"
+                  >
+                    <User size={18} strokeWidth={1.5} />
+                  </motion.button>
                 </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>My Account</DialogTitle>
+                <DialogContent className="sm:max-w-sm rounded-none border-0 shadow-2xl">
+                  <DialogHeader className="pb-6 border-b">
+                    <DialogTitle className="text-lg tracking-wide font-sans font-medium">Account</DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="p-4 bg-muted rounded-lg">
-                      <p className="font-medium">{store.user.name}</p>
-                      <p className="text-sm text-muted-foreground">{store.user.email}</p>
+                  <div className="space-y-4 py-6">
+                    <div className="text-center py-4">
+                      <div className="w-16 h-16 rounded-full bg-black/5 flex items-center justify-center mx-auto mb-4">
+                        <User size={24} strokeWidth={1.5} />
+                      </div>
+                      <p className="font-medium tracking-wide">{store.user.name}</p>
+                      <p className="text-sm text-black/50">{store.user.email}</p>
                       {store.user.role === 'admin' && (
-                        <Badge className="mt-2">Admin</Badge>
+                        <Badge className="mt-3 rounded-none text-[10px] tracking-wider">ADMIN</Badge>
                       )}
                     </div>
-                    <Button variant="outline" className="w-full" onClick={() => setCurrentPage('orders')}>
-                      <Package className="mr-2" size={18} /> My Orders
+                    <Separator />
+                    <Button variant="outline" className="w-full h-11 rounded-none text-sm tracking-wide" onClick={() => setCurrentPage('orders')}>
+                      <Package className="mr-3" size={16} strokeWidth={1.5} /> Order History
                     </Button>
-                    <Button variant="destructive" className="w-full" onClick={store.logout}>
-                      <LogOut className="mr-2" size={18} /> Logout
+                    <Button variant="ghost" className="w-full h-11 rounded-none text-sm tracking-wide text-red-600 hover:text-red-700 hover:bg-red-50" onClick={store.logout}>
+                      <LogOut className="mr-3" size={16} strokeWidth={1.5} /> Sign Out
                     </Button>
                   </div>
                 </DialogContent>
               </Dialog>
             ) : (
-              <button 
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => setShowAuth(true)} 
-                className="p-2 hover:bg-muted rounded-full transition"
+                className="p-3 hover:bg-black/5 rounded-full transition-colors duration-300"
               >
-                <User size={20} />
-              </button>
+                <User size={18} strokeWidth={1.5} />
+              </motion.button>
             )}
           </div>
         </div>
@@ -446,35 +547,42 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="md:hidden overflow-hidden border-t"
+              transition={{ duration: 0.3 }}
+              className="lg:hidden overflow-hidden border-t border-black/10"
             >
-              <nav className="py-4 space-y-2">
-                <button 
-                  onClick={() => { setCurrentPage('home'); setMobileMenuOpen(false); }} 
-                  className="block w-full text-left px-4 py-2 hover:bg-muted rounded"
-                >
-                  Home
-                </button>
-                <button 
-                  onClick={() => { setCurrentPage('shop'); setMobileMenuOpen(false); }} 
-                  className="block w-full text-left px-4 py-2 hover:bg-muted rounded"
-                >
-                  Shop
-                </button>
+              <nav className="py-8 space-y-1">
+                {['Home', 'Shop', 'Wishlist', 'Orders'].map((item, idx) => (
+                  <motion.button 
+                    key={item}
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: idx * 0.05 }}
+                    onClick={() => { 
+                      setCurrentPage(item.toLowerCase()); 
+                      setMobileMenuOpen(false); 
+                    }} 
+                    className="block w-full text-left py-3 text-[13px] tracking-[0.2em] uppercase hover:pl-4 transition-all"
+                  >
+                    {item}
+                  </motion.button>
+                ))}
                 {store.user?.role === 'admin' && (
-                  <button 
+                  <motion.button 
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.2 }}
                     onClick={() => { setCurrentPage('admin'); setMobileMenuOpen(false); }} 
-                    className="block w-full text-left px-4 py-2 hover:bg-muted rounded"
+                    className="block w-full text-left py-3 text-[13px] tracking-[0.2em] uppercase hover:pl-4 transition-all"
                   >
                     Admin Panel
-                  </button>
+                  </motion.button>
                 )}
               </nav>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-    </header>
+    </motion.header>
   );
 };
 
@@ -491,7 +599,7 @@ const AuthModal = ({ show, onClose, store }) => {
     const result = await store.login(email, password);
     setLoading(false);
     if (result.success) {
-      toast.success(`Welcome, ${result.user.name}!`);
+      toast.success(`Welcome, ${result.user.name}`);
       onClose();
     } else {
       toast.error(result.error || 'Authentication failed');
@@ -501,98 +609,127 @@ const AuthModal = ({ show, onClose, store }) => {
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl"
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="bg-white p-8 md:p-12 w-full max-w-md shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-semibold">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-full">
-            <X size={20} />
+        <div className="flex justify-between items-center mb-10">
+          <h2 className="text-2xl font-serif">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
+          <button onClick={onClose} className="p-2 hover:bg-black/5 rounded-full transition-colors">
+            <X size={20} strokeWidth={1.5} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="text-sm font-medium">Email</label>
+            <label className="text-[11px] font-medium tracking-[0.15em] uppercase text-black/60">Email</label>
             <Input 
               type="email" 
               value={email} 
               onChange={(e) => setEmail(e.target.value)}
               placeholder="your@email.com"
+              className="mt-2 h-12 rounded-none border-black/20 focus-visible:ring-0 focus-visible:border-black"
               required
             />
           </div>
           <div>
-            <label className="text-sm font-medium">Password</label>
+            <label className="text-[11px] font-medium tracking-[0.15em] uppercase text-black/60">Password</label>
             <Input 
               type="password" 
               value={password} 
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
+              className="mt-2 h-12 rounded-none border-black/20 focus-visible:ring-0 focus-visible:border-black"
               required
             />
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Please wait...' : (isLogin ? 'Login' : 'Sign Up')}
+          <Button type="submit" className="w-full h-12 rounded-none text-sm tracking-[0.15em]" disabled={loading}>
+            {loading ? 'Please wait...' : (isLogin ? 'SIGN IN' : 'CREATE ACCOUNT')}
           </Button>
         </form>
-        <p className="text-center text-sm text-muted-foreground mt-4">
+        <p className="text-center text-sm text-black/50 mt-8">
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button 
             onClick={() => setIsLogin(!isLogin)} 
-            className="text-black font-medium ml-1 hover:underline"
+            className="text-black font-medium ml-2 hover:underline underline-offset-4"
           >
-            {isLogin ? 'Sign Up' : 'Login'}
+            {isLogin ? 'Sign Up' : 'Sign In'}
           </button>
         </p>
-        <p className="text-center text-xs text-muted-foreground mt-4 p-3 bg-muted rounded-lg">
-          <strong>Demo Admin:</strong> admin@sevenghost.com (any password)
-        </p>
+        <div className="mt-8 p-4 bg-black/5 text-center">
+          <p className="text-xs text-black/60 tracking-wide">
+            Demo: <span className="font-medium">admin@sevenghost.com</span>
+          </p>
+        </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 };
 
-// Product Card Component
-const ProductCard = ({ product, onClick, onWishlist, isWishlisted }) => {
+// Premium Product Card
+const ProductCard = ({ product, onClick, onWishlist, isWishlisted, index }) => {
   const discount = Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -5 }}
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.6, delay: index * 0.1, ease: [0.25, 0.1, 0.25, 1] }}
       className="group cursor-pointer"
       onClick={onClick}
     >
-      <div className="relative overflow-hidden rounded-lg bg-[#f5f5f5] aspect-[3/4]">
-        <img 
+      <div className="relative overflow-hidden bg-[#f5f5f5] aspect-[3/4]">
+        <motion.img 
           src={product.images[0]} 
           alt={product.name}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          className="w-full h-full object-cover"
           loading="lazy"
+          whileHover={{ scale: 1.05 }}
+          transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
         />
-        <button
+        <motion.button
+          initial={{ opacity: 0 }}
+          whileHover={{ scale: 1.1 }}
+          animate={{ opacity: 1 }}
           onClick={(e) => { e.stopPropagation(); onWishlist(product.id); }}
-          className={`absolute top-3 right-3 p-2 rounded-full transition ${isWishlisted ? 'bg-black text-white' : 'bg-white/80 hover:bg-white'}`}
+          className={`absolute top-4 right-4 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+            isWishlisted ? 'bg-black text-white' : 'bg-white/90 hover:bg-white shadow-lg'
+          }`}
         >
-          <Heart size={18} fill={isWishlisted ? 'white' : 'none'} />
-        </button>
+          <Heart size={16} fill={isWishlisted ? 'white' : 'none'} strokeWidth={1.5} />
+        </motion.button>
         {discount > 0 && (
-          <Badge className="absolute top-3 left-3 bg-black text-white">
+          <div className="absolute top-4 left-4 bg-black text-white text-[10px] tracking-[0.1em] px-3 py-1.5">
             -{discount}%
-          </Badge>
+          </div>
         )}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileHover={{ opacity: 1, y: 0 }}
+          className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+        >
+          <button className="w-full py-3 bg-white text-black text-[11px] tracking-[0.15em] font-medium hover:bg-black hover:text-white transition-colors">
+            QUICK VIEW
+          </button>
+        </motion.div>
       </div>
-      <div className="mt-3">
-        <p className="text-xs text-muted-foreground uppercase tracking-wide">{product.type}</p>
-        <h3 className="font-medium mt-1 line-clamp-1">{product.name}</h3>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="font-semibold">₹{product.price}</span>
+      <div className="mt-5 space-y-1.5">
+        <p className="text-[10px] text-black/40 tracking-[0.2em] uppercase">{product.type}</p>
+        <h3 className="text-sm font-medium tracking-wide">{product.name}</h3>
+        <div className="flex items-center gap-3 pt-1">
+          <span className="text-sm font-medium">₹{product.price.toLocaleString()}</span>
           {product.originalPrice > product.price && (
-            <span className="text-sm text-muted-foreground line-through">₹{product.originalPrice}</span>
+            <span className="text-sm text-black/40 line-through">₹{product.originalPrice.toLocaleString()}</span>
           )}
         </div>
       </div>
@@ -600,206 +737,313 @@ const ProductCard = ({ product, onClick, onWishlist, isWishlisted }) => {
   );
 };
 
-// Home Page
+// Premium Home Page
 const HomePage = ({ store, setCurrentPage }) => {
+  const heroRef = useRef(null);
+  const { scrollYProgress } = useScroll({
+    target: heroRef,
+    offset: ["start start", "end start"]
+  });
+  const heroY = useTransform(scrollYProgress, [0, 1], ['0%', '30%']);
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
+
   const featuredProducts = store.products.filter(p => p.featured).slice(0, 4);
   const categories = [
-    { id: 'plain', name: 'Plain T-Shirts', image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600', desc: 'Timeless essentials' },
-    { id: 'printed', name: 'Printed T-Shirts', image: 'https://images.unsplash.com/photo-1503341504253-dff4815485f1?w=600', desc: 'Express yourself' },
-    { id: 'polo', name: 'Polo T-Shirts', image: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=600', desc: 'Refined elegance' }
+    { id: 'plain', name: 'Plain', subtitle: 'Timeless Essentials', image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600' },
+    { id: 'printed', name: 'Printed', subtitle: 'Artful Expression', image: 'https://images.unsplash.com/photo-1503341504253-dff4815485f1?w=600' },
+    { id: 'polo', name: 'Polo', subtitle: 'Refined Elegance', image: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=600' }
   ];
 
   return (
-    <div>
+    <div className="overflow-hidden">
       {/* Hero Section */}
-      <section className="relative h-[90vh] md:h-screen overflow-hidden">
-        <div className="absolute inset-0">
+      <section ref={heroRef} className="relative h-screen">
+        <motion.div style={{ y: heroY }} className="absolute inset-0">
           <img 
             src="https://images.unsplash.com/photo-1611042553484-d61f84d22784?w=1920" 
             alt="Hero"
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-black/30" />
-        </div>
-        <div className="relative h-full container mx-auto px-4 flex items-center">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            className="max-w-xl text-white"
-          >
-            <h2 className="text-4xl md:text-6xl font-bold leading-tight mb-4">
+        </motion.div>
+        <motion.div 
+          style={{ opacity: heroOpacity }}
+          className="relative h-full container mx-auto px-6 lg:px-12 flex items-center"
+        >
+          <div className="max-w-2xl text-white">
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="text-[11px] tracking-[0.4em] uppercase mb-6 text-white/70"
+            >
+              New Collection 2025
+            </motion.p>
+            <motion.h2
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.4 }}
+              className="text-5xl md:text-7xl lg:text-8xl font-serif leading-[0.9] mb-8"
+            >
               Wear Your<br />Identity
-            </h2>
-            <p className="text-lg md:text-xl text-white/80 mb-8">
+            </motion.h2>
+            <motion.p
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.6 }}
+              className="text-lg md:text-xl text-white/70 mb-10 max-w-md leading-relaxed"
+            >
               Premium quality t-shirts designed for those who appreciate minimal aesthetics and superior comfort.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
+            </motion.p>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, delay: 0.8 }}
+              className="flex flex-col sm:flex-row gap-4"
+            >
               <Button 
                 size="lg" 
-                className="bg-white text-black hover:bg-white/90"
+                className="h-14 px-10 bg-white text-black hover:bg-white/90 rounded-none text-[12px] tracking-[0.2em] font-medium"
                 onClick={() => setCurrentPage('shop')}
               >
-                Shop Collection
-                <ArrowRight className="ml-2" size={18} />
+                SHOP COLLECTION
+                <ArrowRight className="ml-3" size={16} />
               </Button>
-              <Button 
-                size="lg" 
-                variant="outline" 
-                className="border-white text-white hover:bg-white/10"
-              >
-                Explore Styles
-              </Button>
-            </div>
-          </motion.div>
+            </motion.div>
+          </div>
+        </motion.div>
+        
+        {/* Scroll indicator */}
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.5 }}
+          className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center text-white"
+        >
+          <span className="text-[10px] tracking-[0.3em] mb-3">SCROLL</span>
+          <motion.div
+            animate={{ y: [0, 8, 0] }}
+            transition={{ duration: 1.5, repeat: Infinity }}
+            className="w-[1px] h-12 bg-white/50"
+          />
+        </motion.div>
+      </section>
+
+      {/* Marquee */}
+      <section className="py-6 border-y border-black/10 overflow-hidden bg-white">
+        <div className="flex animate-marquee whitespace-nowrap">
+          {[...Array(10)].map((_, i) => (
+            <span key={i} className="mx-8 text-[11px] tracking-[0.4em] uppercase text-black/40">
+              Free Shipping Over ₹999 • Premium Quality • Easy Returns • 100% Cotton
+            </span>
+          ))}
         </div>
       </section>
 
       {/* Categories */}
-      <section className="py-16 md:py-24 container mx-auto px-4">
+      <section className="py-24 lg:py-32 container mx-auto px-6 lg:px-12">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-100px" }}
+          variants={fadeInUp}
+          className="text-center mb-16"
         >
-          <h3 className="text-2xl md:text-3xl font-bold mb-3">Shop by Category</h3>
-          <p className="text-muted-foreground">Find your perfect style</p>
+          <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Categories</p>
+          <h3 className="text-3xl md:text-4xl lg:text-5xl font-serif">Shop by Style</h3>
         </motion.div>
-        <div className="grid md:grid-cols-3 gap-6">
+        <motion.div 
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-100px" }}
+          variants={staggerContainer}
+          className="grid md:grid-cols-3 gap-6 lg:gap-8"
+        >
           {categories.map((cat, idx) => (
             <motion.div
               key={cat.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: idx * 0.1 }}
+              variants={fadeInUp}
               className="group cursor-pointer"
               onClick={() => setCurrentPage({ page: 'shop', filter: { type: cat.id } })}
             >
-              <div className="relative overflow-hidden rounded-xl aspect-[4/5]">
-                <img 
+              <div className="relative overflow-hidden aspect-[3/4]">
+                <motion.img 
                   src={cat.image} 
                   alt={cat.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  className="w-full h-full object-cover"
+                  whileHover={{ scale: 1.08 }}
+                  transition={{ duration: 0.8, ease: [0.25, 0.1, 0.25, 1] }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-                <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
-                  <p className="text-sm opacity-80 mb-1">{cat.desc}</p>
-                  <h4 className="text-xl font-semibold flex items-center">
+                <div className="absolute bottom-0 left-0 right-0 p-8 text-white">
+                  <p className="text-[10px] tracking-[0.3em] uppercase opacity-70 mb-2">{cat.subtitle}</p>
+                  <h4 className="text-2xl font-serif flex items-center gap-3">
                     {cat.name}
-                    <ChevronRight className="ml-2 transition-transform group-hover:translate-x-2" size={20} />
+                    <motion.span
+                      initial={{ x: 0, opacity: 0.5 }}
+                      whileHover={{ x: 5, opacity: 1 }}
+                      className="inline-block"
+                    >
+                      <ArrowUpRight size={20} strokeWidth={1.5} />
+                    </motion.span>
                   </h4>
                 </div>
               </div>
             </motion.div>
           ))}
-        </div>
+        </motion.div>
       </section>
 
       {/* Featured Products */}
-      <section className="py-16 md:py-24 bg-[#f5f5f5]">
-        <div className="container mx-auto px-4">
+      <section className="py-24 lg:py-32 bg-[#fafafa]">
+        <div className="container mx-auto px-6 lg:px-12">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="flex justify-between items-end mb-12"
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, margin: "-100px" }}
+            variants={fadeInUp}
+            className="flex flex-col md:flex-row justify-between items-start md:items-end mb-16"
           >
             <div>
-              <h3 className="text-2xl md:text-3xl font-bold mb-3">Featured Collection</h3>
-              <p className="text-muted-foreground">Handpicked styles for you</p>
+              <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Selection</p>
+              <h3 className="text-3xl md:text-4xl lg:text-5xl font-serif">Featured Pieces</h3>
             </div>
-            <Button variant="outline" onClick={() => setCurrentPage('shop')}>
-              View All <ChevronRight className="ml-1" size={16} />
-            </Button>
+            <motion.button 
+              whileHover={{ x: 5 }}
+              onClick={() => setCurrentPage('shop')}
+              className="mt-6 md:mt-0 text-[12px] tracking-[0.15em] uppercase flex items-center gap-3 hover:gap-4 transition-all"
+            >
+              View All <ArrowRight size={14} />
+            </motion.button>
           </motion.div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
             {featuredProducts.map((product, idx) => (
-              <motion.div
+              <ProductCard
                 key={product.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: idx * 0.1 }}
-              >
-                <ProductCard
-                  product={product}
-                  onClick={() => setCurrentPage({ page: 'product', id: product.id })}
-                  onWishlist={store.toggleWishlist}
-                  isWishlisted={store.wishlist.includes(product.id)}
-                />
-              </motion.div>
+                product={product}
+                index={idx}
+                onClick={() => setCurrentPage({ page: 'product', id: product.id })}
+                onWishlist={store.toggleWishlist}
+                isWishlisted={store.wishlist.includes(product.id)}
+              />
             ))}
           </div>
         </div>
       </section>
 
-      {/* Banner */}
-      <section className="py-16 md:py-24 container mx-auto px-4">
+      {/* Editorial Banner */}
+      <section className="py-24 lg:py-32 container mx-auto px-6 lg:px-12">
         <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          whileInView={{ opacity: 1, scale: 1 }}
-          viewport={{ once: true }}
-          className="relative overflow-hidden rounded-2xl bg-black text-white"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-100px" }}
+          variants={scaleIn}
+          className="relative overflow-hidden"
         >
-          <div className="absolute inset-0">
-            <img 
-              src="https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?w=1200" 
-              alt="Banner"
-              className="w-full h-full object-cover opacity-50"
-            />
-          </div>
-          <div className="relative p-8 md:p-16 text-center">
-            <h3 className="text-3xl md:text-5xl font-bold mb-4">New Season Arrivals</h3>
-            <p className="text-lg text-white/80 mb-8 max-w-xl mx-auto">
-              Discover our latest collection featuring premium fabrics and contemporary designs.
-            </p>
-            <Button size="lg" className="bg-white text-black hover:bg-white/90">
-              Shop New Arrivals
-            </Button>
+          <div className="grid md:grid-cols-2 min-h-[600px]">
+            <div className="relative overflow-hidden">
+              <motion.img 
+                src="https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?w=1200" 
+                alt="Editorial"
+                className="w-full h-full object-cover"
+                whileHover={{ scale: 1.05 }}
+                transition={{ duration: 0.8 }}
+              />
+            </div>
+            <div className="bg-black text-white p-10 lg:p-16 flex flex-col justify-center">
+              <motion.div
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.8 }}
+              >
+                <p className="text-[10px] tracking-[0.4em] uppercase text-white/50 mb-6">Editorial</p>
+                <h3 className="text-3xl md:text-4xl lg:text-5xl font-serif mb-6 leading-tight">The Art of<br />Simplicity</h3>
+                <p className="text-white/60 leading-relaxed mb-10 max-w-md">
+                  Discover our philosophy of minimal design. Each piece is crafted to perfection, 
+                  blending timeless aesthetics with contemporary style.
+                </p>
+                <Button 
+                  variant="outline" 
+                  className="w-fit h-12 px-8 rounded-none border-white text-white hover:bg-white hover:text-black text-[11px] tracking-[0.2em]"
+                  onClick={() => setCurrentPage('shop')}
+                >
+                  EXPLORE
+                </Button>
+              </motion.div>
+            </div>
           </div>
         </motion.div>
       </section>
 
+      {/* Values */}
+      <section className="py-20 border-t border-black/10">
+        <div className="container mx-auto px-6 lg:px-12">
+          <motion.div 
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true }}
+            variants={staggerContainer}
+            className="grid md:grid-cols-3 gap-12 text-center"
+          >
+            {[
+              { title: 'Free Shipping', desc: 'Complimentary delivery on orders over ₹999' },
+              { title: 'Premium Quality', desc: '100% organic cotton, sustainably sourced' },
+              { title: 'Easy Returns', desc: '7-day hassle-free return policy' }
+            ].map((item, idx) => (
+              <motion.div key={idx} variants={fadeInUp}>
+                <h4 className="text-[11px] tracking-[0.3em] uppercase mb-3">{item.title}</h4>
+                <p className="text-sm text-black/50">{item.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
+
       {/* Footer */}
-      <footer className="bg-black text-white py-12 md:py-16">
-        <div className="container mx-auto px-4">
-          <div className="grid md:grid-cols-4 gap-8 mb-12">
-            <div>
-              <h4 className="text-xl font-bold mb-4">SEVENGHOST</h4>
-              <p className="text-white/60 text-sm">Premium fashion for the modern individual. Quality meets style.</p>
-            </div>
-            <div>
-              <h5 className="font-semibold mb-4">Quick Links</h5>
-              <ul className="space-y-2 text-white/60 text-sm">
-                <li><button className="hover:text-white">Shop All</button></li>
-                <li><button className="hover:text-white">New Arrivals</button></li>
-                <li><button className="hover:text-white">Best Sellers</button></li>
-              </ul>
-            </div>
-            <div>
-              <h5 className="font-semibold mb-4">Help</h5>
-              <ul className="space-y-2 text-white/60 text-sm">
-                <li><button className="hover:text-white">Contact Us</button></li>
-                <li><button className="hover:text-white">Shipping Info</button></li>
-                <li><button className="hover:text-white">Returns</button></li>
-              </ul>
-            </div>
-            <div>
-              <h5 className="font-semibold mb-4">Newsletter</h5>
-              <p className="text-white/60 text-sm mb-3">Get updates on new arrivals</p>
-              <div className="flex gap-2">
-                <Input placeholder="Email" className="bg-white/10 border-white/20 text-white" />
-                <Button>Join</Button>
+      <footer className="bg-black text-white py-20 lg:py-24">
+        <div className="container mx-auto px-6 lg:px-12">
+          <div className="grid md:grid-cols-4 gap-12 lg:gap-16 mb-16">
+            <div className="md:col-span-2">
+              <h4 className="text-2xl tracking-[0.2em] font-medium mb-6">SEVENGHOST</h4>
+              <p className="text-white/50 text-sm leading-relaxed max-w-sm mb-8">
+                Premium fashion for the modern individual. Where quality meets style, 
+                and every piece tells a story.
+              </p>
+              <div className="flex gap-4">
+                <Input 
+                  placeholder="Email address" 
+                  className="bg-white/10 border-white/20 text-white rounded-none h-12 placeholder:text-white/40 focus-visible:ring-0 focus-visible:border-white/40" 
+                />
+                <Button className="h-12 px-6 rounded-none text-[11px] tracking-[0.15em]">JOIN</Button>
               </div>
             </div>
+            <div>
+              <h5 className="text-[11px] tracking-[0.2em] uppercase mb-6 text-white/50">Quick Links</h5>
+              <ul className="space-y-4">
+                {['Shop All', 'New Arrivals', 'Best Sellers', 'Sale'].map(item => (
+                  <li key={item}>
+                    <button className="text-sm text-white/70 hover:text-white transition-colors">{item}</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h5 className="text-[11px] tracking-[0.2em] uppercase mb-6 text-white/50">Help</h5>
+              <ul className="space-y-4">
+                {['Contact Us', 'Shipping Info', 'Returns', 'Size Guide'].map(item => (
+                  <li key={item}>
+                    <button className="text-sm text-white/70 hover:text-white transition-colors">{item}</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
-          <Separator className="bg-white/20 mb-8" />
-          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-white/60">
-            <p>© 2025 SevenGhost. All rights reserved.</p>
-            <p className="text-xs bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full">
-              ⚡ MOCK MODE - Demo Version
+          <Separator className="bg-white/10 mb-8" />
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <p className="text-[11px] text-white/40 tracking-wide">© 2025 SevenGhost. All rights reserved.</p>
+            <p className="text-[10px] bg-amber-500/20 text-amber-400 px-4 py-2 tracking-wide">
+              DEMO MODE — Payments are simulated
             </p>
           </div>
         </div>
@@ -827,38 +1071,43 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
   });
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen pt-24 lg:pt-32">
       {/* Header */}
-      <div className="bg-[#f5f5f5] py-12 md:py-16">
-        <div className="container mx-auto px-4">
-          <motion.h1 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-3xl md:text-4xl font-bold text-center"
-          >
-            Shop Collection
-          </motion.h1>
-          <p className="text-center text-muted-foreground mt-2">{filteredProducts.length} products</p>
-        </div>
+      <div className="container mx-auto px-6 lg:px-12 py-12 lg:py-16">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="text-center"
+        >
+          <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Collection</p>
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-serif mb-4">Shop All</h1>
+          <p className="text-black/50">{filteredProducts.length} pieces</p>
+        </motion.div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-6 lg:px-12 pb-24">
         {/* Filter Bar */}
-        <div className="flex items-center justify-between mb-8">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="flex items-center justify-between mb-12 pb-6 border-b border-black/10"
+        >
           <Button 
             variant="outline" 
             onClick={() => setShowFilters(!showFilters)}
-            className="md:hidden"
+            className="lg:hidden rounded-none h-10 text-[11px] tracking-[0.15em]"
           >
-            <Filter size={18} className="mr-2" /> Filters
+            <Filter size={14} className="mr-2" /> FILTERS
           </Button>
           
-          <div className="hidden md:flex items-center gap-4">
+          <div className="hidden lg:flex items-center gap-6">
             <Select value={filters.category} onValueChange={(v) => setFilters({...filters, category: v})}>
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-36 rounded-none h-10 text-[11px] tracking-[0.1em] border-black/20">
                 <SelectValue placeholder="Category" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">All</SelectItem>
                 <SelectItem value="men">Men</SelectItem>
                 <SelectItem value="women">Women</SelectItem>
@@ -866,10 +1115,10 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
             </Select>
 
             <Select value={filters.type} onValueChange={(v) => setFilters({...filters, type: v})}>
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-36 rounded-none h-10 text-[11px] tracking-[0.1em] border-black/20">
                 <SelectValue placeholder="Type" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">All Types</SelectItem>
                 <SelectItem value="plain">Plain</SelectItem>
                 <SelectItem value="printed">Printed</SelectItem>
@@ -878,18 +1127,20 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
             </Select>
 
             <Select value={filters.priceRange} onValueChange={(v) => setFilters({...filters, priceRange: v})}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-40 rounded-none h-10 text-[11px] tracking-[0.1em] border-black/20">
                 <SelectValue placeholder="Price" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-none">
                 <SelectItem value="all">All Prices</SelectItem>
-                <SelectItem value="under1500">Under ₹1500</SelectItem>
-                <SelectItem value="1500to2000">₹1500 - ₹2000</SelectItem>
-                <SelectItem value="above2000">Above ₹2000</SelectItem>
+                <SelectItem value="under1500">Under ₹1,500</SelectItem>
+                <SelectItem value="1500to2000">₹1,500 - ₹2,000</SelectItem>
+                <SelectItem value="above2000">Above ₹2,000</SelectItem>
               </SelectContent>
             </Select>
           </div>
-        </div>
+          
+          <p className="text-[11px] text-black/40 tracking-wide hidden lg:block">{filteredProducts.length} RESULTS</p>
+        </motion.div>
 
         {/* Mobile Filters */}
         <AnimatePresence>
@@ -898,41 +1149,39 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="md:hidden mb-6 overflow-hidden"
+              className="lg:hidden mb-8 overflow-hidden"
             >
-              <div className="p-4 bg-muted rounded-lg space-y-4">
+              <div className="p-6 bg-[#fafafa] space-y-4">
                 <Select value={filters.category} onValueChange={(v) => setFilters({...filters, category: v})}>
-                  <SelectTrigger>
+                  <SelectTrigger className="rounded-none">
                     <SelectValue placeholder="Category" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-none">
                     <SelectItem value="all">All</SelectItem>
                     <SelectItem value="men">Men</SelectItem>
                     <SelectItem value="women">Women</SelectItem>
                   </SelectContent>
                 </Select>
-
                 <Select value={filters.type} onValueChange={(v) => setFilters({...filters, type: v})}>
-                  <SelectTrigger>
+                  <SelectTrigger className="rounded-none">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-none">
                     <SelectItem value="all">All Types</SelectItem>
                     <SelectItem value="plain">Plain</SelectItem>
                     <SelectItem value="printed">Printed</SelectItem>
                     <SelectItem value="polo">Polo</SelectItem>
                   </SelectContent>
                 </Select>
-
                 <Select value={filters.priceRange} onValueChange={(v) => setFilters({...filters, priceRange: v})}>
-                  <SelectTrigger>
+                  <SelectTrigger className="rounded-none">
                     <SelectValue placeholder="Price" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-none">
                     <SelectItem value="all">All Prices</SelectItem>
-                    <SelectItem value="under1500">Under ₹1500</SelectItem>
-                    <SelectItem value="1500to2000">₹1500 - ₹2000</SelectItem>
-                    <SelectItem value="above2000">Above ₹2000</SelectItem>
+                    <SelectItem value="under1500">Under ₹1,500</SelectItem>
+                    <SelectItem value="1500to2000">₹1,500 - ₹2,000</SelectItem>
+                    <SelectItem value="above2000">Above ₹2,000</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -941,28 +1190,27 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
         </AnimatePresence>
 
         {/* Products Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
           {filteredProducts.map((product, idx) => (
-            <motion.div
+            <ProductCard
               key={product.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-            >
-              <ProductCard
-                product={product}
-                onClick={() => setCurrentPage({ page: 'product', id: product.id })}
-                onWishlist={store.toggleWishlist}
-                isWishlisted={store.wishlist.includes(product.id)}
-              />
-            </motion.div>
+              product={product}
+              index={idx}
+              onClick={() => setCurrentPage({ page: 'product', id: product.id })}
+              onWishlist={store.toggleWishlist}
+              isWishlisted={store.wishlist.includes(product.id)}
+            />
           ))}
         </div>
 
         {filteredProducts.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-muted-foreground">No products found with selected filters</p>
-          </div>
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center py-24"
+          >
+            <p className="text-black/40 tracking-wide">No products found</p>
+          </motion.div>
         )}
       </div>
     </div>
@@ -972,13 +1220,12 @@ const ShopPage = ({ store, setCurrentPage, initialFilter }) => {
 // Product Detail Page
 const ProductPage = ({ store, productId, setCurrentPage }) => {
   const [selectedSize, setSelectedSize] = useState('');
-  const [quantity, setQuantity] = useState(1);
   const product = store.products.find(p => p.id === productId);
 
   if (!product) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Product not found</p>
+      <div className="min-h-screen flex items-center justify-center pt-24">
+        <p className="text-black/40">Product not found</p>
       </div>
     );
   }
@@ -986,16 +1233,15 @@ const ProductPage = ({ store, productId, setCurrentPage }) => {
   const relatedProducts = store.products
     .filter(p => p.type === product.type && p.id !== product.id)
     .slice(0, 4);
+  
+  const discount = Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100);
 
   const handleAddToCart = async () => {
     if (!selectedSize) {
       toast.error('Please select a size');
       return;
     }
-    const success = await store.addToCart(product.id, selectedSize);
-    if (success) {
-      setSelectedSize('');
-    }
+    await store.addToCart(product.id, selectedSize);
   };
 
   const handleBuyNow = async () => {
@@ -1004,132 +1250,154 @@ const ProductPage = ({ store, productId, setCurrentPage }) => {
       return;
     }
     const success = await store.addToCart(product.id, selectedSize);
-    if (success) {
-      setCurrentPage('checkout');
-    }
+    if (success) setCurrentPage('checkout');
   };
 
   return (
-    <div className="min-h-screen">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen pt-24 lg:pt-32">
+      <div className="container mx-auto px-6 lg:px-12 py-8">
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
-          <button onClick={() => setCurrentPage('home')} className="hover:text-black">Home</button>
-          <ChevronRight size={14} />
-          <button onClick={() => setCurrentPage('shop')} className="hover:text-black">Shop</button>
-          <ChevronRight size={14} />
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex items-center gap-3 text-[11px] text-black/40 mb-12 tracking-wide"
+        >
+          <button onClick={() => setCurrentPage('home')} className="hover:text-black transition-colors">Home</button>
+          <span>/</span>
+          <button onClick={() => setCurrentPage('shop')} className="hover:text-black transition-colors">Shop</button>
+          <span>/</span>
           <span className="text-black">{product.name}</span>
-        </div>
+        </motion.div>
 
-        <div className="grid md:grid-cols-2 gap-8 md:gap-12">
-          {/* Images */}
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-20">
+          {/* Image */}
           <motion.div
-            initial={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6 }}
           >
-            <div className="aspect-[3/4] rounded-xl overflow-hidden bg-[#f5f5f5]">
-              <img 
+            <div className="aspect-[3/4] bg-[#f5f5f5] overflow-hidden sticky top-32">
+              <motion.img 
                 src={product.images[0]} 
                 alt={product.name}
                 className="w-full h-full object-cover"
+                whileHover={{ scale: 1.03 }}
+                transition={{ duration: 0.8 }}
               />
             </div>
           </motion.div>
 
           {/* Details */}
           <motion.div
-            initial={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, x: 30 }}
             animate={{ opacity: 1, x: 0 }}
-            className="flex flex-col"
+            transition={{ duration: 0.6 }}
+            className="lg:py-8"
           >
-            <p className="text-sm text-muted-foreground uppercase tracking-wide">{product.category} • {product.type}</p>
-            <h1 className="text-2xl md:text-3xl font-bold mt-2">{product.name}</h1>
+            <p className="text-[10px] text-black/40 tracking-[0.3em] uppercase mb-4">
+              {product.category} · {product.type}
+            </p>
+            <h1 className="text-3xl lg:text-4xl font-serif mb-6">{product.name}</h1>
             
-            <div className="flex items-center gap-3 mt-4">
-              <span className="text-2xl font-bold">₹{product.price}</span>
+            <div className="flex items-center gap-4 mb-8">
+              <span className="text-2xl font-medium">₹{product.price.toLocaleString()}</span>
               {product.originalPrice > product.price && (
                 <>
-                  <span className="text-lg text-muted-foreground line-through">₹{product.originalPrice}</span>
-                  <Badge className="bg-green-100 text-green-800">
-                    {Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)}% OFF
-                  </Badge>
+                  <span className="text-lg text-black/40 line-through">₹{product.originalPrice.toLocaleString()}</span>
+                  <span className="text-[10px] tracking-[0.1em] bg-green-100 text-green-800 px-3 py-1">
+                    SAVE {discount}%
+                  </span>
                 </>
               )}
             </div>
 
-            <p className="text-muted-foreground mt-4">{product.description}</p>
+            <p className="text-black/60 leading-relaxed mb-10">{product.description}</p>
 
-            <Separator className="my-6" />
+            <Separator className="my-8" />
 
             {/* Size Selection */}
-            <div>
-              <p className="font-medium mb-3">Select Size</p>
-              <div className="flex flex-wrap gap-2">
+            <div className="mb-10">
+              <div className="flex justify-between items-center mb-4">
+                <p className="text-[11px] tracking-[0.2em] uppercase">Select Size</p>
+                <button className="text-[11px] text-black/50 underline underline-offset-4">Size Guide</button>
+              </div>
+              <div className="flex flex-wrap gap-3">
                 {product.sizes.map(size => (
-                  <button
+                  <motion.button
                     key={size}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
                     onClick={() => setSelectedSize(size)}
-                    className={`w-12 h-12 rounded-lg border-2 font-medium transition ${
+                    className={`w-14 h-14 border text-sm font-medium transition-all duration-300 ${
                       selectedSize === size 
                         ? 'border-black bg-black text-white' 
-                        : 'border-border hover:border-black'
+                        : 'border-black/20 hover:border-black'
                     }`}
                   >
                     {size}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-3 mt-8">
-              <Button size="lg" className="flex-1" onClick={handleAddToCart}>
-                <ShoppingBag className="mr-2" size={18} />
-                Add to Cart
+            <div className="flex flex-col gap-4 mb-10">
+              <Button 
+                className="h-14 rounded-none text-[12px] tracking-[0.2em]" 
+                onClick={handleAddToCart}
+              >
+                ADD TO BAG
               </Button>
-              <Button size="lg" variant="outline" className="flex-1" onClick={handleBuyNow}>
-                Buy Now
+              <Button 
+                variant="outline" 
+                className="h-14 rounded-none text-[12px] tracking-[0.2em] border-black" 
+                onClick={handleBuyNow}
+              >
+                BUY NOW
               </Button>
             </div>
 
-            <button 
+            <motion.button 
+              whileHover={{ scale: 1.02 }}
               onClick={() => store.toggleWishlist(product.id)}
-              className="flex items-center justify-center gap-2 mt-4 text-sm text-muted-foreground hover:text-black"
+              className="flex items-center gap-3 text-[11px] tracking-[0.15em] uppercase text-black/60 hover:text-black transition-colors"
             >
-              <Heart size={18} fill={store.wishlist.includes(product.id) ? 'currentColor' : 'none'} />
-              {store.wishlist.includes(product.id) ? 'Remove from Wishlist' : 'Add to Wishlist'}
-            </button>
+              <Heart size={16} fill={store.wishlist.includes(product.id) ? 'currentColor' : 'none'} strokeWidth={1.5} />
+              {store.wishlist.includes(product.id) ? 'Saved to Wishlist' : 'Add to Wishlist'}
+            </motion.button>
 
             {/* Features */}
-            <div className="mt-8 p-4 bg-muted rounded-lg space-y-3">
-              <div className="flex items-center gap-3 text-sm">
-                <Truck size={18} />
-                <span>Free shipping on orders above ₹999</span>
-              </div>
-              <div className="flex items-center gap-3 text-sm">
-                <Package size={18} />
-                <span>Easy 7-day returns</span>
-              </div>
+            <div className="mt-12 space-y-4">
+              {[
+                { icon: Truck, text: 'Free shipping on orders over ₹999' },
+                { icon: Package, text: 'Easy 7-day returns' }
+              ].map((item, idx) => (
+                <div key={idx} className="flex items-center gap-4 text-sm text-black/60">
+                  <item.icon size={18} strokeWidth={1.5} />
+                  <span>{item.text}</span>
+                </div>
+              ))}
             </div>
           </motion.div>
         </div>
 
         {/* Related Products */}
         {relatedProducts.length > 0 && (
-          <div className="mt-16">
-            <h2 className="text-xl font-bold mb-6">You May Also Like</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-              {relatedProducts.map(p => (
+          <section className="mt-24 lg:mt-32 pt-16 border-t border-black/10">
+            <h2 className="text-2xl font-serif mb-12 text-center">You May Also Like</h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+              {relatedProducts.map((p, idx) => (
                 <ProductCard
                   key={p.id}
                   product={p}
+                  index={idx}
                   onClick={() => setCurrentPage({ page: 'product', id: p.id })}
                   onWishlist={store.toggleWishlist}
                   isWishlisted={store.wishlist.includes(p.id)}
                 />
               ))}
             </div>
-          </div>
+          </section>
         )}
       </div>
     </div>
@@ -1139,12 +1407,7 @@ const ProductPage = ({ store, productId, setCurrentPage }) => {
 // Checkout Page
 const CheckoutPage = ({ store, setCurrentPage }) => {
   const [address, setAddress] = useState({
-    name: '',
-    phone: '',
-    addressLine: '',
-    city: '',
-    state: '',
-    pincode: ''
+    name: '', phone: '', addressLine: '', city: '', state: '', pincode: ''
   });
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [loading, setLoading] = useState(false);
@@ -1156,15 +1419,12 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
     }
 
     setLoading(true);
-
     try {
       if (paymentMethod === 'razorpay') {
-        // Mock Razorpay payment
-        toast.info('🔔 MOCK MODE: Simulating Razorpay payment...');
+        toast.info('Simulating payment...');
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
-      // Create order
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1182,8 +1442,6 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
         store.setCart({ items: [], total: 0 });
         toast.success('Order placed successfully!');
         setCurrentPage('orders');
-      } else {
-        toast.error('Failed to place order');
       }
     } catch (e) {
       toast.error('Something went wrong');
@@ -1194,10 +1452,10 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
 
   if (!store.user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center pt-24">
         <div className="text-center">
-          <p className="text-muted-foreground mb-4">Please login to checkout</p>
-          <Button onClick={() => setCurrentPage('home')}>Go Home</Button>
+          <p className="text-black/40 mb-6">Please login to checkout</p>
+          <Button onClick={() => setCurrentPage('home')} className="rounded-none">Go Home</Button>
         </div>
       </div>
     );
@@ -1205,168 +1463,162 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
 
   if (store.cart.items.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center pt-24">
         <div className="text-center">
-          <ShoppingBag size={48} className="mx-auto mb-4 text-muted-foreground" />
-          <p className="text-muted-foreground mb-4">Your cart is empty</p>
-          <Button onClick={() => setCurrentPage('shop')}>Continue Shopping</Button>
+          <ShoppingBag size={48} className="mx-auto mb-6 opacity-20" strokeWidth={1} />
+          <p className="text-black/40 mb-6">Your bag is empty</p>
+          <Button onClick={() => setCurrentPage('shop')} className="rounded-none">Continue Shopping</Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] py-8">
-      <div className="container mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-8">Checkout</h1>
+    <div className="min-h-screen pt-24 lg:pt-32 bg-[#fafafa]">
+      <div className="container mx-auto px-6 lg:px-12 py-12">
+        <motion.h1 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-3xl font-serif mb-12 text-center"
+        >
+          Checkout
+        </motion.h1>
         
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid lg:grid-cols-3 gap-12">
           {/* Form */}
-          <div className="md:col-span-2 space-y-6">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="lg:col-span-2 space-y-8"
+          >
             {/* Address */}
-            <Card>
-              <CardContent className="p-6">
-                <h2 className="font-semibold mb-4">Delivery Address</h2>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium">Full Name</label>
-                    <Input 
-                      value={address.name}
-                      onChange={(e) => setAddress({...address, name: e.target.value})}
-                      placeholder="John Doe"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">Phone</label>
-                    <Input 
-                      value={address.phone}
-                      onChange={(e) => setAddress({...address, phone: e.target.value})}
-                      placeholder="9876543210"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-sm font-medium">Address</label>
-                    <Input 
-                      value={address.addressLine}
-                      onChange={(e) => setAddress({...address, addressLine: e.target.value})}
-                      placeholder="House no, Street, Area"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">City</label>
-                    <Input 
-                      value={address.city}
-                      onChange={(e) => setAddress({...address, city: e.target.value})}
-                      placeholder="Mumbai"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">State</label>
-                    <Input 
-                      value={address.state}
-                      onChange={(e) => setAddress({...address, state: e.target.value})}
-                      placeholder="Maharashtra"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">Pincode</label>
-                    <Input 
-                      value={address.pincode}
-                      onChange={(e) => setAddress({...address, pincode: e.target.value})}
-                      placeholder="400001"
-                    />
-                  </div>
+            <div className="bg-white p-8">
+              <h2 className="text-[11px] tracking-[0.2em] uppercase mb-6">Delivery Address</h2>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Full Name</label>
+                  <Input 
+                    value={address.name}
+                    onChange={(e) => setAddress({...address, name: e.target.value})}
+                    className="mt-2 rounded-none h-12 border-black/20"
+                  />
                 </div>
-              </CardContent>
-            </Card>
+                <div>
+                  <label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Phone</label>
+                  <Input 
+                    value={address.phone}
+                    onChange={(e) => setAddress({...address, phone: e.target.value})}
+                    className="mt-2 rounded-none h-12 border-black/20"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Address</label>
+                  <Input 
+                    value={address.addressLine}
+                    onChange={(e) => setAddress({...address, addressLine: e.target.value})}
+                    className="mt-2 rounded-none h-12 border-black/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] tracking-[0.15em] uppercase text-black/50">City</label>
+                  <Input 
+                    value={address.city}
+                    onChange={(e) => setAddress({...address, city: e.target.value})}
+                    className="mt-2 rounded-none h-12 border-black/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Pincode</label>
+                  <Input 
+                    value={address.pincode}
+                    onChange={(e) => setAddress({...address, pincode: e.target.value})}
+                    className="mt-2 rounded-none h-12 border-black/20"
+                  />
+                </div>
+              </div>
+            </div>
 
             {/* Payment */}
-            <Card>
-              <CardContent className="p-6">
-                <h2 className="font-semibold mb-4">Payment Method</h2>
-                <div className="space-y-3">
-                  <label className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition ${
-                    paymentMethod === 'razorpay' ? 'border-black bg-black/5' : 'border-border'
-                  }`}>
+            <div className="bg-white p-8">
+              <h2 className="text-[11px] tracking-[0.2em] uppercase mb-6">Payment Method</h2>
+              <div className="space-y-4">
+                {[
+                  { id: 'razorpay', label: 'Pay Online', desc: 'Cards, UPI, Net Banking', icon: CreditCard, mock: true },
+                  { id: 'cod', label: 'Cash on Delivery', desc: 'Pay when you receive', icon: Truck }
+                ].map((method) => (
+                  <label 
+                    key={method.id}
+                    className={`flex items-center gap-4 p-5 border cursor-pointer transition-all ${
+                      paymentMethod === method.id ? 'border-black' : 'border-black/10 hover:border-black/30'
+                    }`}
+                  >
                     <input 
                       type="radio" 
                       name="payment" 
-                      checked={paymentMethod === 'razorpay'}
-                      onChange={() => setPaymentMethod('razorpay')}
+                      checked={paymentMethod === method.id}
+                      onChange={() => setPaymentMethod(method.id)}
                       className="w-4 h-4"
                     />
-                    <CreditCard size={20} />
-                    <div>
-                      <p className="font-medium">Pay Online (Razorpay)</p>
-                      <p className="text-xs text-muted-foreground">Cards, UPI, Net Banking, Wallets</p>
+                    <method.icon size={20} strokeWidth={1.5} />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{method.label}</p>
+                      <p className="text-xs text-black/50">{method.desc}</p>
                     </div>
-                    <Badge className="ml-auto bg-yellow-100 text-yellow-800">MOCK</Badge>
+                    {method.mock && (
+                      <span className="text-[9px] tracking-wide bg-amber-100 text-amber-800 px-2 py-1">DEMO</span>
+                    )}
                   </label>
-                  <label className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition ${
-                    paymentMethod === 'cod' ? 'border-black bg-black/5' : 'border-border'
-                  }`}>
-                    <input 
-                      type="radio" 
-                      name="payment" 
-                      checked={paymentMethod === 'cod'}
-                      onChange={() => setPaymentMethod('cod')}
-                      className="w-4 h-4"
-                    />
-                    <Truck size={20} />
-                    <div>
-                      <p className="font-medium">Cash on Delivery</p>
-                      <p className="text-xs text-muted-foreground">Pay when you receive</p>
-                    </div>
-                  </label>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
 
           {/* Order Summary */}
-          <div>
-            <Card className="sticky top-24">
-              <CardContent className="p-6">
-                <h2 className="font-semibold mb-4">Order Summary</h2>
-                <div className="space-y-3 mb-4">
-                  {store.cart.items.map(item => (
-                    <div key={item.id} className="flex gap-3">
-                      <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium line-clamp-1">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">Size: {item.size} × {item.quantity}</p>
-                        <p className="text-sm font-semibold">₹{item.price * item.quantity}</p>
-                      </div>
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <div className="bg-white p-8 sticky top-32">
+              <h2 className="text-[11px] tracking-[0.2em] uppercase mb-6">Order Summary</h2>
+              <div className="space-y-4 mb-6">
+                {store.cart.items.map(item => (
+                  <div key={item.id} className="flex gap-4">
+                    <img src={item.image} alt={item.name} className="w-20 h-24 object-cover" />
+                    <div>
+                      <p className="text-sm font-medium">{item.name}</p>
+                      <p className="text-xs text-black/50">Size: {item.size} × {item.quantity}</p>
+                      <p className="text-sm mt-1">₹{(item.price * item.quantity).toLocaleString()}</p>
                     </div>
-                  ))}
-                </div>
-                <Separator className="my-4" />
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Subtotal</span>
-                    <span>₹{store.cart.total}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Shipping</span>
-                    <span className="text-green-600">Free</span>
-                  </div>
+                ))}
+              </div>
+              <Separator className="my-6" />
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-black/50">Subtotal</span>
+                  <span>₹{store.cart.total.toLocaleString()}</span>
                 </div>
-                <Separator className="my-4" />
-                <div className="flex justify-between font-semibold text-lg">
-                  <span>Total</span>
-                  <span>₹{store.cart.total}</span>
+                <div className="flex justify-between">
+                  <span className="text-black/50">Shipping</span>
+                  <span className="text-green-700">Free</span>
                 </div>
-                <Button 
-                  className="w-full mt-6" 
-                  size="lg"
-                  onClick={handlePlaceOrder}
-                  disabled={loading}
-                >
-                  {loading ? 'Processing...' : 'Place Order'}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+              <Separator className="my-6" />
+              <div className="flex justify-between text-lg font-medium mb-8">
+                <span>Total</span>
+                <span>₹{store.cart.total.toLocaleString()}</span>
+              </div>
+              <Button 
+                className="w-full h-14 rounded-none text-[12px] tracking-[0.2em]" 
+                onClick={handlePlaceOrder}
+                disabled={loading}
+              >
+                {loading ? 'PROCESSING...' : 'PLACE ORDER'}
+              </Button>
+            </div>
+          </motion.div>
         </div>
       </div>
     </div>
@@ -1379,9 +1631,7 @@ const OrdersPage = ({ store, setCurrentPage }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (store.user) {
-      fetchOrders();
-    }
+    if (store.user) fetchOrders();
   }, [store.user]);
 
   const fetchOrders = async () => {
@@ -1390,82 +1640,84 @@ const OrdersPage = ({ store, setCurrentPage }) => {
       const data = await res.json();
       setOrders(data.orders || []);
     } catch (e) {
-      console.error('Error fetching orders:', e);
+      console.error('Error:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!store.user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Please login to view orders</p>
-      </div>
-    );
-  }
+  if (!store.user) return null;
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] py-8">
-      <div className="container mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-8">My Orders</h1>
+    <div className="min-h-screen pt-24 lg:pt-32 bg-[#fafafa]">
+      <div className="container mx-auto px-6 lg:px-12 py-12">
+        <motion.h1 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-3xl font-serif mb-12 text-center"
+        >
+          My Orders
+        </motion.h1>
         
         {loading ? (
           <div className="space-y-4">
             {[1,2,3].map(i => (
-              <div key={i} className="h-32 bg-white rounded-lg animate-pulse" />
+              <div key={i} className="h-32 bg-white animate-pulse" />
             ))}
           </div>
         ) : orders.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <Package size={48} className="mx-auto mb-4 text-muted-foreground" />
-              <p className="text-muted-foreground mb-4">No orders yet</p>
-              <Button onClick={() => setCurrentPage('shop')}>Start Shopping</Button>
-            </CardContent>
-          </Card>
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="bg-white p-16 text-center"
+          >
+            <Package size={48} className="mx-auto mb-6 opacity-20" strokeWidth={1} />
+            <p className="text-black/40 mb-6">No orders yet</p>
+            <Button onClick={() => setCurrentPage('shop')} className="rounded-none">Start Shopping</Button>
+          </motion.div>
         ) : (
-          <div className="space-y-4">
-            {orders.map(order => (
-              <Card key={order.id}>
-                <CardContent className="p-6">
-                  <div className="flex flex-wrap justify-between items-start gap-4 mb-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Order #{order.id.slice(0, 8)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(order.createdAt).toLocaleDateString('en-IN', {
-                          day: 'numeric', month: 'short', year: 'numeric'
-                        })}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Badge variant={order.status === 'delivered' ? 'default' : 'secondary'}>
-                        {order.status}
-                      </Badge>
-                      <Badge variant="outline">
-                        {order.paymentMethod === 'cod' ? 'COD' : 'Paid'}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-4">
-                    {order.items.map(item => (
-                      <div key={item.id} className="flex gap-3">
-                        <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
-                        <div>
-                          <p className="text-sm font-medium">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">Size: {item.size} × {item.quantity}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Separator className="my-4" />
-                  <div className="flex justify-between items-center">
-                    <p className="text-sm text-muted-foreground">
-                      {order.address.city}, {order.address.state}
+          <div className="space-y-6">
+            {orders.map((order, idx) => (
+              <motion.div 
+                key={order.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.1 }}
+                className="bg-white p-6 lg:p-8"
+              >
+                <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
+                  <div>
+                    <p className="text-[11px] text-black/40 tracking-wide">ORDER #{order.id.slice(0, 8).toUpperCase()}</p>
+                    <p className="text-sm mt-1">
+                      {new Date(order.createdAt).toLocaleDateString('en-IN', {
+                        day: 'numeric', month: 'long', year: 'numeric'
+                      })}
                     </p>
-                    <p className="font-semibold">₹{order.total}</p>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="flex gap-3">
+                    <Badge variant="secondary" className="rounded-none text-[10px] tracking-wide">{order.status}</Badge>
+                    <Badge variant="outline" className="rounded-none text-[10px] tracking-wide">
+                      {order.paymentMethod === 'cod' ? 'COD' : 'PAID'}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  {order.items.map(item => (
+                    <div key={item.id} className="flex gap-3">
+                      <img src={item.image} alt={item.name} className="w-16 h-20 object-cover" />
+                      <div>
+                        <p className="text-sm font-medium">{item.name}</p>
+                        <p className="text-xs text-black/50">{item.size} × {item.quantity}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Separator className="my-6" />
+                <div className="flex justify-between items-center">
+                  <p className="text-sm text-black/50">{order.address?.city}</p>
+                  <p className="font-medium">₹{order.total.toLocaleString()}</p>
+                </div>
+              </motion.div>
             ))}
           </div>
         )}
@@ -1479,24 +1731,34 @@ const WishlistPage = ({ store, setCurrentPage }) => {
   const wishlistedProducts = store.products.filter(p => store.wishlist.includes(p.id));
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] py-8">
-      <div className="container mx-auto px-4">
-        <h1 className="text-2xl font-bold mb-8">My Wishlist ({wishlistedProducts.length})</h1>
+    <div className="min-h-screen pt-24 lg:pt-32 bg-[#fafafa]">
+      <div className="container mx-auto px-6 lg:px-12 py-12">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-12"
+        >
+          <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Saved Items</p>
+          <h1 className="text-3xl font-serif">Wishlist ({wishlistedProducts.length})</h1>
+        </motion.div>
         
         {wishlistedProducts.length === 0 ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <Heart size={48} className="mx-auto mb-4 text-muted-foreground" />
-              <p className="text-muted-foreground mb-4">Your wishlist is empty</p>
-              <Button onClick={() => setCurrentPage('shop')}>Explore Products</Button>
-            </CardContent>
-          </Card>
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="bg-white p-16 text-center"
+          >
+            <Heart size={48} className="mx-auto mb-6 opacity-20" strokeWidth={1} />
+            <p className="text-black/40 mb-6">Your wishlist is empty</p>
+            <Button onClick={() => setCurrentPage('shop')} className="rounded-none">Explore Collection</Button>
+          </motion.div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-            {wishlistedProducts.map(product => (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+            {wishlistedProducts.map((product, idx) => (
               <ProductCard
                 key={product.id}
                 product={product}
+                index={idx}
                 onClick={() => setCurrentPage({ page: 'product', id: product.id })}
                 onWishlist={store.toggleWishlist}
                 isWishlisted={true}
@@ -1509,25 +1771,13 @@ const WishlistPage = ({ store, setCurrentPage }) => {
   );
 };
 
-// Admin Page
+// Admin Page (keeping it simpler for space)
 const AdminPage = ({ store }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showAddProduct, setShowAddProduct] = useState(false);
-  const [newProduct, setNewProduct] = useState({
-    name: '',
-    category: 'men',
-    type: 'plain',
-    price: '',
-    originalPrice: '',
-    images: '',
-    sizes: 'S,M,L,XL',
-    stock: '',
-    description: ''
-  });
 
   useEffect(() => {
     fetchAdminData();
@@ -1540,374 +1790,107 @@ const AdminPage = ({ store }) => {
         fetch('/api/admin/orders'),
         fetch('/api/products')
       ]);
-      const statsData = await statsRes.json();
-      const ordersData = await ordersRes.json();
-      const productsData = await productsRes.json();
-      
-      setStats(statsData.stats);
-      setOrders(ordersData.orders || []);
-      setProducts(productsData.products || []);
+      setStats((await statsRes.json()).stats);
+      setOrders((await ordersRes.json()).orders || []);
+      setProducts((await productsRes.json()).products || []);
     } catch (e) {
-      console.error('Error fetching admin data:', e);
+      console.error('Error:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddProduct = async () => {
-    try {
-      const res = await fetch('/api/admin/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newProduct,
-          price: parseInt(newProduct.price),
-          originalPrice: parseInt(newProduct.originalPrice) || parseInt(newProduct.price),
-          images: newProduct.images.split(',').map(url => url.trim()),
-          sizes: newProduct.sizes.split(',').map(s => s.trim()),
-          stock: parseInt(newProduct.stock) || 0
-        })
-      });
-      const data = await res.json();
-      if (data.product) {
-        toast.success('Product added!');
-        setShowAddProduct(false);
-        setNewProduct({
-          name: '',
-          category: 'men',
-          type: 'plain',
-          price: '',
-          originalPrice: '',
-          images: '',
-          sizes: 'S,M,L,XL',
-          stock: '',
-          description: ''
-        });
-        fetchAdminData();
-        store.fetchProducts();
-      }
-    } catch (e) {
-      toast.error('Failed to add product');
-    }
-  };
-
-  const handleDeleteProduct = async (productId) => {
-    if (!confirm('Delete this product?')) return;
-    try {
-      await fetch(`/api/admin/products/${productId}`, { method: 'DELETE' });
-      toast.success('Product deleted');
-      fetchAdminData();
-      store.fetchProducts();
-    } catch (e) {
-      toast.error('Failed to delete');
-    }
-  };
-
-  const handleUpdateOrderStatus = async (orderId, status) => {
-    try {
-      await fetch(`/api/admin/orders/${orderId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      toast.success('Order updated');
-      fetchAdminData();
-    } catch (e) {
-      toast.error('Failed to update order');
-    }
-  };
-
   if (store.user?.role !== 'admin') {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p>Access denied. Admin only.</p>
+      <div className="min-h-screen flex items-center justify-center pt-24">
+        <p className="text-black/40">Access denied</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5]">
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-          <Badge className="bg-yellow-100 text-yellow-800">MOCK MODE</Badge>
+    <div className="min-h-screen pt-24 lg:pt-32 bg-[#fafafa]">
+      <div className="container mx-auto px-6 lg:px-12 py-12">
+        <div className="flex items-center justify-between mb-12">
+          <h1 className="text-3xl font-serif">Admin Panel</h1>
+          <Badge className="rounded-none bg-amber-100 text-amber-800 text-[10px] tracking-wide">DEMO MODE</Badge>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-8">
-            <TabsTrigger value="dashboard">
-              <TrendingUp className="mr-2" size={16} /> Dashboard
-            </TabsTrigger>
-            <TabsTrigger value="products">
-              <Grid3X3 className="mr-2" size={16} /> Products
-            </TabsTrigger>
-            <TabsTrigger value="orders">
-              <Package className="mr-2" size={16} /> Orders
-            </TabsTrigger>
+          <TabsList className="mb-8 rounded-none bg-white p-1">
+            <TabsTrigger value="dashboard" className="rounded-none text-[11px] tracking-wide">Dashboard</TabsTrigger>
+            <TabsTrigger value="products" className="rounded-none text-[11px] tracking-wide">Products</TabsTrigger>
+            <TabsTrigger value="orders" className="rounded-none text-[11px] tracking-wide">Orders</TabsTrigger>
           </TabsList>
 
-          {/* Dashboard Tab */}
           <TabsContent value="dashboard">
             {loading ? (
               <div className="grid md:grid-cols-4 gap-6">
-                {[1,2,3,4].map(i => (
-                  <div key={i} className="h-32 bg-white rounded-lg animate-pulse" />
-                ))}
+                {[1,2,3,4].map(i => <div key={i} className="h-32 bg-white animate-pulse" />)}
               </div>
             ) : (
               <div className="grid md:grid-cols-4 gap-6">
-                <Card>
-                  <CardContent className="p-6">
+                {[
+                  { label: 'Total Revenue', value: `₹${stats?.totalRevenue?.toLocaleString() || 0}`, icon: DollarSign, color: 'green' },
+                  { label: 'Total Orders', value: stats?.totalOrders || 0, icon: ShoppingCart, color: 'blue' },
+                  { label: 'Products', value: stats?.totalProducts || 0, icon: Grid3X3, color: 'purple' },
+                  { label: 'Pending', value: stats?.pendingOrders || 0, icon: Package, color: 'amber' }
+                ].map((item, idx) => (
+                  <motion.div 
+                    key={idx}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.1 }}
+                    className="bg-white p-6"
+                  >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Revenue</p>
-                        <p className="text-2xl font-bold">₹{stats?.totalRevenue || 0}</p>
+                        <p className="text-[10px] tracking-wide text-black/40 uppercase">{item.label}</p>
+                        <p className="text-2xl font-medium mt-2">{item.value}</p>
                       </div>
-                      <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                        <DollarSign className="text-green-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Orders</p>
-                        <p className="text-2xl font-bold">{stats?.totalOrders || 0}</p>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                        <ShoppingCart className="text-blue-600" />
+                      <div className={`w-12 h-12 rounded-full bg-${item.color}-100 flex items-center justify-center`}>
+                        <item.icon className={`text-${item.color}-600`} size={20} />
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Products</p>
-                        <p className="text-2xl font-bold">{stats?.totalProducts || 0}</p>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
-                        <Grid3X3 className="text-purple-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Pending Orders</p>
-                        <p className="text-2xl font-bold">{stats?.pendingOrders || 0}</p>
-                      </div>
-                      <div className="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center">
-                        <Package className="text-yellow-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                  </motion.div>
+                ))}
               </div>
             )}
           </TabsContent>
 
-          {/* Products Tab */}
           <TabsContent value="products">
-            <div className="flex justify-between items-center mb-6">
-              <p className="text-muted-foreground">{products.length} products</p>
-              <Dialog open={showAddProduct} onOpenChange={setShowAddProduct}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2" size={16} /> Add Product
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-lg">
-                  <DialogHeader>
-                    <DialogTitle>Add New Product</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
-                    <div>
-                      <label className="text-sm font-medium">Name</label>
-                      <Input 
-                        value={newProduct.name}
-                        onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
-                        placeholder="Product name"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium">Category</label>
-                        <Select value={newProduct.category} onValueChange={(v) => setNewProduct({...newProduct, category: v})}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="men">Men</SelectItem>
-                            <SelectItem value="women">Women</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium">Type</label>
-                        <Select value={newProduct.type} onValueChange={(v) => setNewProduct({...newProduct, type: v})}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="plain">Plain</SelectItem>
-                            <SelectItem value="printed">Printed</SelectItem>
-                            <SelectItem value="polo">Polo</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium">Price (₹)</label>
-                        <Input 
-                          type="number"
-                          value={newProduct.price}
-                          onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
-                          placeholder="1499"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium">Original Price (₹)</label>
-                        <Input 
-                          type="number"
-                          value={newProduct.originalPrice}
-                          onChange={(e) => setNewProduct({...newProduct, originalPrice: e.target.value})}
-                          placeholder="1999"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Image URLs (comma separated)</label>
-                      <Input 
-                        value={newProduct.images}
-                        onChange={(e) => setNewProduct({...newProduct, images: e.target.value})}
-                        placeholder="https://..."
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium">Sizes (comma separated)</label>
-                        <Input 
-                          value={newProduct.sizes}
-                          onChange={(e) => setNewProduct({...newProduct, sizes: e.target.value})}
-                          placeholder="S,M,L,XL"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium">Stock</label>
-                        <Input 
-                          type="number"
-                          value={newProduct.stock}
-                          onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
-                          placeholder="50"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Description</label>
-                      <Input 
-                        value={newProduct.description}
-                        onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
-                        placeholder="Product description"
-                      />
-                    </div>
-                    <Button onClick={handleAddProduct} className="w-full">Add Product</Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {products.map(product => (
-                <Card key={product.id}>
-                  <CardContent className="p-4">
-                    <div className="flex gap-4">
-                      <img src={product.images[0]} alt={product.name} className="w-20 h-20 object-cover rounded" />
-                      <div className="flex-1">
-                        <h4 className="font-medium line-clamp-1">{product.name}</h4>
-                        <p className="text-sm text-muted-foreground">{product.category} • {product.type}</p>
-                        <p className="font-semibold">₹{product.price}</p>
-                      </div>
-                      <button 
-                        onClick={() => handleDeleteProduct(product.id)}
-                        className="text-red-500 hover:text-red-700"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </CardContent>
-                </Card>
+                <div key={product.id} className="bg-white p-4 flex gap-4">
+                  <img src={product.images[0]} alt={product.name} className="w-20 h-24 object-cover" />
+                  <div>
+                    <h4 className="font-medium text-sm">{product.name}</h4>
+                    <p className="text-xs text-black/50">{product.category} · {product.type}</p>
+                    <p className="font-medium mt-2">₹{product.price.toLocaleString()}</p>
+                  </div>
+                </div>
               ))}
             </div>
           </TabsContent>
 
-          {/* Orders Tab */}
           <TabsContent value="orders">
             <div className="space-y-4">
               {orders.length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center">
-                    <p className="text-muted-foreground">No orders yet</p>
-                  </CardContent>
-                </Card>
+                <div className="bg-white p-8 text-center">
+                  <p className="text-black/40">No orders yet</p>
+                </div>
               ) : (
                 orders.map(order => (
-                  <Card key={order.id}>
-                    <CardContent className="p-6">
-                      <div className="flex flex-wrap justify-between items-start gap-4 mb-4">
-                        <div>
-                          <p className="font-medium">Order #{order.id.slice(0, 8)}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {new Date(order.createdAt).toLocaleDateString('en-IN')}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {order.address?.name} • {order.address?.city}
-                          </p>
-                        </div>
-                        <div className="flex flex-col gap-2 items-end">
-                          <Select 
-                            value={order.status} 
-                            onValueChange={(v) => handleUpdateOrderStatus(order.id, v)}
-                          >
-                            <SelectTrigger className="w-32">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pending">Pending</SelectItem>
-                              <SelectItem value="confirmed">Confirmed</SelectItem>
-                              <SelectItem value="shipped">Shipped</SelectItem>
-                              <SelectItem value="delivered">Delivered</SelectItem>
-                              <SelectItem value="cancelled">Cancelled</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Badge variant="outline">
-                            {order.paymentMethod === 'cod' ? 'COD' : 'Paid'}
-                          </Badge>
-                        </div>
+                  <div key={order.id} className="bg-white p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <p className="font-medium">Order #{order.id.slice(0, 8)}</p>
+                        <p className="text-xs text-black/50">{new Date(order.createdAt).toLocaleDateString()}</p>
                       </div>
-                      <div className="flex flex-wrap gap-3">
-                        {order.items.map(item => (
-                          <div key={item.id} className="flex gap-2 items-center bg-muted p-2 rounded">
-                            <img src={item.image} alt={item.name} className="w-10 h-10 object-cover rounded" />
-                            <div>
-                              <p className="text-sm font-medium line-clamp-1">{item.name}</p>
-                              <p className="text-xs text-muted-foreground">{item.size} × {item.quantity}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <Separator className="my-4" />
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Total</span>
-                        <span className="font-semibold">₹{order.total}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
+                      <Badge className="rounded-none">{order.status}</Badge>
+                    </div>
+                    <p className="text-sm text-black/50">{order.items.length} items · ₹{order.total.toLocaleString()}</p>
+                  </div>
                 ))
               )}
             </div>
@@ -1921,50 +1904,45 @@ const AdminPage = ({ store }) => {
 // Mobile Bottom Navigation
 const MobileNav = ({ currentPage, setCurrentPage, store, setShowAuth }) => {
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t md:hidden z-40">
-      <div className="flex items-center justify-around py-2">
-        <button 
-          onClick={() => setCurrentPage('home')}
-          className={`flex flex-col items-center p-2 ${currentPage === 'home' ? 'text-black' : 'text-muted-foreground'}`}
-        >
-          <Home size={20} />
-          <span className="text-[10px] mt-1">Home</span>
-        </button>
-        <button 
-          onClick={() => setCurrentPage('shop')}
-          className={`flex flex-col items-center p-2 ${currentPage === 'shop' ? 'text-black' : 'text-muted-foreground'}`}
-        >
-          <Grid3X3 size={20} />
-          <span className="text-[10px] mt-1">Shop</span>
-        </button>
-        <button 
-          onClick={() => store.user ? setCurrentPage('wishlist') : setShowAuth(true)}
-          className={`flex flex-col items-center p-2 relative ${currentPage === 'wishlist' ? 'text-black' : 'text-muted-foreground'}`}
-        >
-          <Heart size={20} />
-          {store.wishlist.length > 0 && (
-            <span className="absolute top-1 right-3 w-3 h-3 bg-black text-white text-[8px] rounded-full flex items-center justify-center">
-              {store.wishlist.length}
-            </span>
-          )}
-          <span className="text-[10px] mt-1">Wishlist</span>
-        </button>
-        <button 
-          onClick={() => store.user ? setCurrentPage('orders') : setShowAuth(true)}
-          className={`flex flex-col items-center p-2 ${currentPage === 'orders' ? 'text-black' : 'text-muted-foreground'}`}
-        >
-          <Package size={20} />
-          <span className="text-[10px] mt-1">Orders</span>
-        </button>
-        <button 
-          onClick={() => store.user ? null : setShowAuth(true)}
-          className="flex flex-col items-center p-2 text-muted-foreground"
-        >
-          <User size={20} />
-          <span className="text-[10px] mt-1">{store.user ? 'Account' : 'Login'}</span>
-        </button>
+    <motion.div 
+      initial={{ y: 100 }}
+      animate={{ y: 0 }}
+      className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-black/10 lg:hidden z-40"
+    >
+      <div className="flex items-center justify-around py-3">
+        {[
+          { icon: Home, label: 'Home', page: 'home' },
+          { icon: Grid3X3, label: 'Shop', page: 'shop' },
+          { icon: Heart, label: 'Saved', page: 'wishlist', count: store.wishlist.length },
+          { icon: Package, label: 'Orders', page: 'orders' },
+          { icon: User, label: 'Account', page: 'account' }
+        ].map((item) => (
+          <button 
+            key={item.page}
+            onClick={() => {
+              if (item.page === 'account') {
+                if (!store.user) setShowAuth(true);
+              } else if (['wishlist', 'orders'].includes(item.page) && !store.user) {
+                setShowAuth(true);
+              } else {
+                setCurrentPage(item.page);
+              }
+            }}
+            className={`flex flex-col items-center p-2 relative ${
+              currentPage === item.page ? 'text-black' : 'text-black/40'
+            }`}
+          >
+            <item.icon size={20} strokeWidth={1.5} />
+            {item.count > 0 && (
+              <span className="absolute top-1 right-1 w-3 h-3 bg-black text-white text-[8px] rounded-full flex items-center justify-center">
+                {item.count}
+              </span>
+            )}
+            <span className="text-[9px] mt-1 tracking-wide">{item.label}</span>
+          </button>
+        ))}
       </div>
-    </div>
+    </motion.div>
   );
 };
 
@@ -1974,16 +1952,11 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [showAuth, setShowAuth] = useState(false);
 
-  // Handle page navigation with filters
   const handleSetCurrentPage = (page) => {
-    if (typeof page === 'object') {
-      setCurrentPage(page);
-    } else {
-      setCurrentPage(page);
-    }
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Render current page
   const renderPage = () => {
     const page = typeof currentPage === 'object' ? currentPage.page : currentPage;
 
@@ -2008,16 +1981,24 @@ export default function App() {
   if (store.loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-black border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading SevenGhost...</p>
-        </div>
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-center"
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            className="w-10 h-10 border border-black border-t-transparent rounded-full mx-auto mb-6"
+          />
+          <p className="text-[11px] tracking-[0.3em] uppercase text-black/40">Loading</p>
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="pb-16 md:pb-0">
+    <div className="pb-20 lg:pb-0">
       <Header 
         store={store} 
         currentPage={typeof currentPage === 'object' ? currentPage.page : currentPage} 
@@ -2026,7 +2007,9 @@ export default function App() {
       />
       
       <main>
-        {renderPage()}
+        <AnimatePresence mode="wait">
+          {renderPage()}
+        </AnimatePresence>
       </main>
 
       <MobileNav 
@@ -2036,11 +2019,15 @@ export default function App() {
         setShowAuth={setShowAuth}
       />
 
-      <AuthModal 
-        show={showAuth} 
-        onClose={() => setShowAuth(false)} 
-        store={store} 
-      />
+      <AnimatePresence>
+        {showAuth && (
+          <AuthModal 
+            show={showAuth} 
+            onClose={() => setShowAuth(false)} 
+            store={store} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
