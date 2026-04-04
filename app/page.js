@@ -937,7 +937,8 @@ const AdminPanel = ({ store, setCurrentPage }) => {
               <p className="text-sm text-black/50">Manage your store</p>
             </div>
             <div className="flex items-center gap-4">
-              <Badge className="bg-amber-100 text-amber-800 rounded-full">Demo Mode</Badge>
+              {settings?.payment?.mode !== 'live' && <Badge className="bg-amber-100 text-amber-800 rounded-full">Demo Mode</Badge>}
+              {settings?.payment?.mode === 'live' && <Badge className="bg-green-100 text-green-800 rounded-full">Live</Badge>}
               <button onClick={fetchAll} className="p-2 hover:bg-black/5 rounded-lg"><RefreshCw size={20} /></button>
               <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center text-sm font-medium">
                 {store.user?.name?.charAt(0).toUpperCase()}
