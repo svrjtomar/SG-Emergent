@@ -1,41 +1,296 @@
 import { NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db';
-import { sampleProducts } from '@/lib/seed';
+import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { getSupabaseServerClient, hasSupabaseEnv, isUsingServiceRole } from '@/lib/supabase';
 
-// CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+const defaultSettings = {
+  supabase: { url: '', anonKey: '', serviceRoleKey: '', configured: false },
+  razorpay: { keyId: '', keySecret: '', configured: false, mode: 'test' },
+  payment: { mode: 'mock', codEnabled: true, razorpayEnabled: false },
+  store: { name: 'SevenGhost', currency: 'INR', freeShippingThreshold: 999 },
+};
+
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: corsHeaders });
 }
 
-// Helper to get path segments
 function getPathSegments(request) {
   const url = new URL(request.url);
   const path = url.pathname.replace('/api', '');
   return path.split('/').filter(Boolean);
 }
 
-// ============== GET HANDLERS ==============
+function json(data, init = {}) {
+  return NextResponse.json(data, {
+    ...init,
+    headers: {
+      ...corsHeaders,
+      ...(init.headers || {}),
+    },
+  });
+}
+
+function enrichSupabaseError(error) {
+  const message = String(error?.message || error || 'Unknown Supabase error');
+  if (!isUsingServiceRole() && /row-level security|permission denied|not allowed|violates row-level security/i.test(message)) {
+    return `${message}. Add SUPABASE_SERVICE_ROLE_KEY to .env.local for server-side writes or disable RLS on these tables.`;
+  }
+  return message;
+}
+
+function isMissingColumnError(error) {
+  return /schema cache|column|does not exist/i.test(String(error?.message || error || ''));
+}
+
+function isMaskedSecret(value) {
+  return typeof value === 'string' && /^\*{4,}/.test(value);
+}
+
+function fallbackCart(userId) {
+  return { userId, items: [], total: 0 };
+}
+
+function fallbackWishlist(userId) {
+  return { userId, items: [] };
+}
+
+function mapProduct(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    price: row.price ?? 0,
+    originalPrice: row.original_price ?? row.price ?? 0,
+    images: Array.isArray(row.images) ? row.images : [],
+    category: row.category,
+    type: row.type,
+    sizes: Array.isArray(row.sizes) && row.sizes.length > 0 ? row.sizes : ['S', 'M', 'L', 'XL'],
+    stock: row.stock ?? 0,
+    description: row.description || 'Premium everyday essential.',
+    featured: row.featured ?? true,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function mapUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role || 'user',
+    createdAt: row.created_at,
+  };
+}
+
+function mapCart(row, userId) {
+  if (!row) return fallbackCart(userId);
+  return {
+    userId,
+    items: Array.isArray(row.items) ? row.items : [],
+    total: row.total ?? 0,
+  };
+}
+
+function mapWishlist(row, userId) {
+  if (!row) return fallbackWishlist(userId);
+  return {
+    userId,
+    items: Array.isArray(row.items) ? row.items : [],
+  };
+}
+
+function mapOrder(row) {
+  return {
+    id: row.id,
+    orderNumber: row.order_number || `SG${String(row.id).slice(0, 8).toUpperCase()}`,
+    userId: row.user_id,
+    userEmail: row.user_email || 'guest',
+    userName: row.user_name || '',
+    items: Array.isArray(row.items) ? row.items : [],
+    address: row.address || {},
+    paymentMethod: row.payment_method || 'cod',
+    total: row.total ?? 0,
+    status: row.status || 'pending',
+    paymentStatus: row.payment_status || 'pending',
+    razorpayOrderId: row.razorpay_order_id || null,
+    razorpayPaymentId: row.razorpay_payment_id || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+function maskSettings(settings) {
+  return {
+    ...settings,
+    supabase: {
+      ...settings.supabase,
+      anonKey: settings.supabase?.anonKey ? `********${settings.supabase.anonKey.slice(-8)}` : '',
+      serviceRoleKey: settings.supabase?.serviceRoleKey ? `********${settings.supabase.serviceRoleKey.slice(-8)}` : '',
+    },
+    razorpay: {
+      ...settings.razorpay,
+      keySecret: settings.razorpay?.keySecret ? `********${settings.razorpay.keySecret.slice(-4)}` : '',
+    },
+  };
+}
+
+function calcCartTotal(items) {
+  return (items || []).reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
+}
+
+function generateOrderNumber() {
+  const stamp = Date.now().toString().slice(-8);
+  const suffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+  return `SG${stamp}${suffix}`;
+}
+
+function normalizeAddress(address = {}) {
+  return {
+    ...address,
+    address: address.address || address.addressLine || '',
+  };
+}
+
+function buildOrderPayload({ userId, userRow, items, address, paymentMethod, total, orderNumber }) {
+  const normalizedAddress = normalizeAddress(address);
+  return {
+    user_id: userId,
+    order_number: orderNumber,
+    user_email: userRow?.email || normalizedAddress.email || 'guest',
+    user_name: userRow?.name || normalizedAddress.name || '',
+    items,
+    address: normalizedAddress,
+    payment_method: paymentMethod,
+    total,
+    status: 'pending',
+    payment_status: paymentMethod === 'cod' ? 'pending' : 'created',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function buildReadFallback(segments) {
+  if (segments[0] === 'products' && segments.length === 1) return { products: [] };
+  if (segments[0] === 'products' && segments.length === 2) return { product: null };
+  if (segments[0] === 'cart' && segments.length === 2) return { cart: fallbackCart(segments[1]) };
+  if (segments[0] === 'orders' && segments.length === 2) return { orders: [] };
+  if (segments[0] === 'wishlist' && segments.length === 2) return { wishlist: fallbackWishlist(segments[1]) };
+  if (segments[0] === 'admin' && segments[1] === 'orders') return { orders: [] };
+  if (segments[0] === 'admin' && segments[1] === 'users') return { users: [] };
+  if (segments[0] === 'admin' && segments[1] === 'stats') {
+    return {
+      stats: {
+        totalOrders: 0,
+        totalProducts: 0,
+        totalUsers: 0,
+        totalRevenue: 0,
+        pendingOrders: 0,
+        deliveredOrders: 0,
+        chartData: [],
+        recentOrders: [],
+      },
+    };
+  }
+  if (segments[0] === 'admin' && segments[1] === 'settings') return { settings: maskSettings(defaultSettings) };
+  if (segments[0] === 'seed') return { message: 'Supabase mode enabled. Seed via SQL or Supabase Studio.', count: 0 };
+  return null;
+}
+
+function getClientOrFallback(segments) {
+  if (!hasSupabaseEnv()) {
+    return { client: null, fallback: buildReadFallback(segments), error: 'Supabase environment variables are missing' };
+  }
+  return { client: getSupabaseServerClient(), fallback: null, error: null };
+}
+
+async function getSettingsRecord(supabase) {
+  const { data, error } = await supabase.from('settings').select('*').eq('id', 'app_settings').maybeSingle();
+  if (error) {
+    return { id: 'app_settings', ...defaultSettings };
+  }
+  if (!data) return { id: 'app_settings', ...defaultSettings };
+  return {
+    id: data.id,
+    supabase: data.supabase || defaultSettings.supabase,
+    razorpay: data.razorpay || defaultSettings.razorpay,
+    payment: data.payment || defaultSettings.payment,
+    store: data.store || defaultSettings.store,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
+}
+
+async function fetchCartRecord(supabase, userId) {
+  const { data, error } = await supabase.from('cart').select('*').eq('user_id', userId).maybeSingle();
+  if (error) throw error;
+  return mapCart(data, userId);
+}
+
+async function fetchWishlistRecord(supabase, userId) {
+  const { data, error } = await supabase.from('wishlist').select('*').eq('user_id', userId).maybeSingle();
+  if (error) throw error;
+  return mapWishlist(data, userId);
+}
+
+async function upsertCart(supabase, userId, items) {
+  const { data, error } = await supabase
+    .from('cart')
+    .upsert(
+      {
+        user_id: userId,
+        items,
+        total: calcCartTotal(items),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapCart(data, userId);
+}
+
+async function upsertWishlist(supabase, userId, items) {
+  const { data, error } = await supabase
+    .from('wishlist')
+    .upsert(
+      {
+        user_id: userId,
+        items,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    )
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapWishlist(data, userId);
+}
+
 export async function GET(request) {
+  const segments = getPathSegments(request);
+  const url = new URL(request.url);
+
+  if (segments.length === 0 || segments[0] === 'health') {
+    return json({ status: 'SevenGhost API is running', timestamp: new Date().toISOString() });
+  }
+
+  const { client: supabase, fallback, error: envError } = getClientOrFallback(segments);
+  if (!supabase && fallback) {
+    return json({ ...fallback, warning: envError });
+  }
+
   try {
-    const segments = getPathSegments(request);
-    const url = new URL(request.url);
-
-    // Health check
-    if (segments.length === 0 || segments[0] === 'health') {
-      return NextResponse.json({ status: 'SevenGhost API is running', timestamp: new Date().toISOString() }, { headers: corsHeaders });
-    }
-
-    const { db } = await connectToDatabase();
-
-    // GET /api/products - List all products with filters
     if (segments[0] === 'products' && segments.length === 1) {
+      let query = supabase.from('products').select('*').order('created_at', { ascending: false });
       const category = url.searchParams.get('category');
       const type = url.searchParams.get('type');
       const search = url.searchParams.get('search');
@@ -43,554 +298,660 @@ export async function GET(request) {
       const minPrice = url.searchParams.get('minPrice');
       const maxPrice = url.searchParams.get('maxPrice');
 
-      let query = {};
-      if (category) query.category = category;
-      if (type) query.type = type;
-      if (featured === 'true') query.featured = true;
-      if (search) {
-        query.name = { $regex: search, $options: 'i' };
-      }
-      if (minPrice || maxPrice) {
-        query.price = {};
-        if (minPrice) query.price.$gte = parseInt(minPrice);
-        if (maxPrice) query.price.$lte = parseInt(maxPrice);
-      }
+      if (category) query = query.eq('category', category);
+      if (type) query = query.eq('type', type);
+      if (search) query = query.ilike('name', `%${search}%`);
+      if (minPrice) query = query.gte('price', Number.parseInt(minPrice, 10));
+      if (maxPrice) query = query.lte('price', Number.parseInt(maxPrice, 10));
 
-      const products = await db.collection('products').find(query).toArray();
-      return NextResponse.json({ products }, { headers: corsHeaders });
+      const { data, error } = await query;
+      if (error) throw error;
+      let products = (data || []).map(mapProduct);
+      if (featured === 'true') {
+        products = products.filter((product) => product.featured);
+      }
+      return json({ products });
     }
 
-    // GET /api/products/:id - Get single product
     if (segments[0] === 'products' && segments.length === 2) {
-      const productId = segments[1];
-      const product = await db.collection('products').findOne({ id: productId });
-      if (!product) {
-        return NextResponse.json({ error: 'Product not found' }, { status: 404, headers: corsHeaders });
-      }
-      return NextResponse.json({ product }, { headers: corsHeaders });
+      const { data, error } = await supabase.from('products').select('*').eq('id', segments[1]).maybeSingle();
+      if (error) throw error;
+      if (!data) return json({ error: 'Product not found' }, { status: 404 });
+      return json({ product: mapProduct(data) });
     }
 
-    // GET /api/cart/:userId - Get user's cart
     if (segments[0] === 'cart' && segments.length === 2) {
-      const userId = segments[1];
-      const cart = await db.collection('carts').findOne({ userId });
-      return NextResponse.json({ cart: cart || { userId, items: [], total: 0 } }, { headers: corsHeaders });
+      return json({ cart: await fetchCartRecord(supabase, segments[1]) });
     }
 
-    // GET /api/orders/:userId - Get user's orders
     if (segments[0] === 'orders' && segments.length === 2) {
-      const userId = segments[1];
-      const orders = await db.collection('orders').find({ userId }).sort({ createdAt: -1 }).toArray();
-      return NextResponse.json({ orders }, { headers: corsHeaders });
+      const { data, error } = await supabase.from('orders').select('*').eq('user_id', segments[1]).order('created_at', { ascending: false });
+      if (error) throw error;
+      const { data: userRow } = await supabase.from('users').select('*').eq('id', segments[1]).maybeSingle();
+      const orders = (data || []).map((row) => ({
+        ...mapOrder(row),
+        userName: userRow?.name || '',
+      }));
+      return json({ orders });
     }
 
-    // GET /api/admin/orders - Get all orders (admin)
     if (segments[0] === 'admin' && segments[1] === 'orders') {
+      let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
       const status = url.searchParams.get('status');
       const search = url.searchParams.get('search');
-      let query = {};
-      if (status && status !== 'all') query.status = status;
-      if (search) {
-        query.$or = [
-          { id: { $regex: search, $options: 'i' } },
-          { 'address.name': { $regex: search, $options: 'i' } },
-          { 'address.phone': { $regex: search, $options: 'i' } }
-        ];
+      if (status && status !== 'all') query = query.eq('status', status);
+      const { data, error } = await query;
+      if (error) throw error;
+      const userIds = [...new Set((data || []).map((row) => row.user_id).filter(Boolean))];
+      let userMap = new Map();
+      if (userIds.length > 0) {
+        const { data: usersData } = await supabase.from('users').select('*').in('id', userIds);
+        userMap = new Map((usersData || []).map((user) => [user.id, mapUser(user)]));
       }
-      const orders = await db.collection('orders').find(query).sort({ createdAt: -1 }).toArray();
-      return NextResponse.json({ orders }, { headers: corsHeaders });
+      let orders = (data || []).map((row) => {
+        const order = mapOrder(row);
+        const user = userMap.get(order.userId);
+        return {
+          ...order,
+          userName: order.userName || user?.name || '',
+          userEmail: order.userEmail !== 'guest' ? order.userEmail : user?.email || 'guest',
+        };
+      });
+      if (search) {
+        const needle = search.toLowerCase();
+        orders = orders.filter((order) =>
+          order.id?.toLowerCase().includes(needle) ||
+          order.orderNumber?.toLowerCase().includes(needle) ||
+          order.userName?.toLowerCase().includes(needle) ||
+          order.address?.name?.toLowerCase().includes(needle) ||
+          order.address?.phone?.toLowerCase().includes(needle)
+        );
+      }
+      return json({ orders });
     }
 
-    // GET /api/admin/stats - Get dashboard stats
     if (segments[0] === 'admin' && segments[1] === 'stats') {
-      const totalOrders = await db.collection('orders').countDocuments();
-      const totalProducts = await db.collection('products').countDocuments();
-      const totalUsers = await db.collection('users').countDocuments();
-      const orders = await db.collection('orders').find({}).toArray();
-      const totalRevenue = orders.reduce((sum, order) => sum + (order.total || 0), 0);
-      const pendingOrders = await db.collection('orders').countDocuments({ status: 'pending' });
-      const deliveredOrders = await db.collection('orders').countDocuments({ status: 'delivered' });
-      
-      // Get orders by date for chart (last 7 days)
-      const last7Days = [];
-      for (let i = 6; i >= 0; i--) {
+      const [ordersRes, productsRes, usersRes] = await Promise.all([
+        supabase.from('orders').select('*'),
+        supabase.from('products').select('id'),
+        supabase.from('users').select('id'),
+      ]);
+      if (ordersRes.error) throw ordersRes.error;
+      if (productsRes.error) throw productsRes.error;
+      if (usersRes.error) throw usersRes.error;
+
+      const orders = (ordersRes.data || []).map(mapOrder);
+      const chartData = [];
+      for (let i = 6; i >= 0; i -= 1) {
         const date = new Date();
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
-        const dayOrders = orders.filter(o => o.createdAt && o.createdAt.startsWith(dateStr));
-        last7Days.push({
+        const dayOrders = orders.filter((order) => order.createdAt?.startsWith(dateStr));
+        chartData.push({
           date: dateStr,
           orders: dayOrders.length,
-          revenue: dayOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+          revenue: dayOrders.reduce((sum, order) => sum + (order.total || 0), 0),
         });
       }
 
-      // Recent orders
-      const recentOrders = await db.collection('orders').find({}).sort({ createdAt: -1 }).limit(5).toArray();
-      
-      return NextResponse.json({
+      return json({
         stats: {
-          totalOrders,
-          totalProducts,
-          totalUsers,
-          totalRevenue,
-          pendingOrders,
-          deliveredOrders,
-          chartData: last7Days,
-          recentOrders
-        }
-      }, { headers: corsHeaders });
-    }
-
-    // GET /api/admin/users - Get all users
-    if (segments[0] === 'admin' && segments[1] === 'users') {
-      const users = await db.collection('users').find({}).sort({ createdAt: -1 }).toArray();
-      // Get order count for each user
-      const usersWithOrders = await Promise.all(users.map(async (user) => {
-        const orderCount = await db.collection('orders').countDocuments({ userId: user.id });
-        const userOrders = await db.collection('orders').find({ userId: user.id }).toArray();
-        const totalSpent = userOrders.reduce((sum, o) => sum + (o.total || 0), 0);
-        return { ...user, orderCount, totalSpent };
-      }));
-      return NextResponse.json({ users: usersWithOrders }, { headers: corsHeaders });
-    }
-
-    // GET /api/admin/settings - Get app settings
-    if (segments[0] === 'admin' && segments[1] === 'settings') {
-      let settings = await db.collection('settings').findOne({ id: 'app_settings' });
-      if (!settings) {
-        settings = {
-          id: 'app_settings',
-          supabase: { url: '', anonKey: '', serviceRoleKey: '', configured: false },
-          razorpay: { keyId: '', keySecret: '', configured: false, mode: 'test' },
-          payment: { mode: 'mock', codEnabled: true, razorpayEnabled: false },
-          store: { name: 'SevenGhost', currency: 'INR', freeShippingThreshold: 999 },
-          createdAt: new Date().toISOString()
-        };
-        await db.collection('settings').insertOne(settings);
-      }
-      // Mask sensitive data
-      const maskedSettings = {
-        ...settings,
-        supabase: {
-          ...settings.supabase,
-          anonKey: settings.supabase?.anonKey ? '••••••••' + settings.supabase.anonKey.slice(-8) : '',
-          serviceRoleKey: settings.supabase?.serviceRoleKey ? '••••••••' + settings.supabase.serviceRoleKey.slice(-8) : ''
+          totalOrders: orders.length,
+          totalProducts: productsRes.data?.length || 0,
+          totalUsers: usersRes.data?.length || 0,
+          totalRevenue: orders.reduce((sum, order) => sum + (order.total || 0), 0),
+          pendingOrders: orders.filter((order) => order.status === 'pending').length,
+          deliveredOrders: orders.filter((order) => order.status === 'delivered').length,
+          chartData,
+          recentOrders: orders.slice(0, 5),
         },
-        razorpay: {
-          ...settings.razorpay,
-          keySecret: settings.razorpay?.keySecret ? '••••••••' + settings.razorpay.keySecret.slice(-4) : ''
-        }
-      };
-      return NextResponse.json({ settings: maskedSettings }, { headers: corsHeaders });
+      });
     }
 
-    // GET /api/wishlist/:userId - Get user's wishlist
+    if (segments[0] === 'admin' && segments[1] === 'users') {
+      const [usersRes, ordersRes] = await Promise.all([
+        supabase.from('users').select('*').order('created_at', { ascending: false }),
+        supabase.from('orders').select('*'),
+      ]);
+      if (usersRes.error) throw usersRes.error;
+      if (ordersRes.error) throw ordersRes.error;
+
+      const orders = (ordersRes.data || []).map(mapOrder);
+      const users = (usersRes.data || []).map((row) => {
+        const user = mapUser(row);
+        const userOrders = orders.filter((order) => order.userId === user.id);
+        return {
+          ...user,
+          orderCount: userOrders.length,
+          totalSpent: userOrders.reduce((sum, order) => sum + (order.total || 0), 0),
+        };
+      });
+
+      return json({ users });
+    }
+
+    if (segments[0] === 'admin' && segments[1] === 'settings') {
+      return json({ settings: maskSettings(await getSettingsRecord(supabase)) });
+    }
+
     if (segments[0] === 'wishlist' && segments.length === 2) {
-      const userId = segments[1];
-      const wishlist = await db.collection('wishlists').findOne({ userId });
-      return NextResponse.json({ wishlist: wishlist || { userId, items: [] } }, { headers: corsHeaders });
+      return json({ wishlist: await fetchWishlistRecord(supabase, segments[1]) });
     }
 
-    // GET /api/seed - Seed database with sample products
     if (segments[0] === 'seed') {
-      const existingProducts = await db.collection('products').countDocuments();
-      if (existingProducts === 0) {
-        await db.collection('products').insertMany(sampleProducts);
-        return NextResponse.json({ message: 'Database seeded with sample products', count: sampleProducts.length }, { headers: corsHeaders });
-      }
-      return NextResponse.json({ message: 'Database already has products', count: existingProducts }, { headers: corsHeaders });
+      return json({ message: 'Supabase mode enabled. Seed via SQL or Supabase Studio.', count: 0 });
     }
 
-    return NextResponse.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
+    return json({ error: 'Not found' }, { status: 404 });
   } catch (error) {
     console.error('GET Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+    const message = enrichSupabaseError(error);
+    if (fallback) return json({ ...fallback, warning: message });
+    return json({ error: message }, { status: 500 });
   }
 }
 
-// ============== POST HANDLERS ==============
 export async function POST(request) {
-  try {
-    const segments = getPathSegments(request);
-    const body = await request.json();
-    const { db } = await connectToDatabase();
+  const segments = getPathSegments(request);
+  const body = await request.json();
+  const { client: supabase } = getClientOrFallback(segments);
 
-    // POST /api/auth/login - Mock login
+  if (!supabase) {
+    return json({ error: 'Supabase environment variables are missing' }, { status: 500 });
+  }
+
+  try {
     if (segments[0] === 'auth' && segments[1] === 'login') {
       const { email, password } = body;
       if (!email || !password) {
-        return NextResponse.json({ error: 'Email and password required' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'Email and password required' }, { status: 400 });
       }
-      
-      let user = await db.collection('users').findOne({ email });
+
+      const { data: existing, error: lookupError } = await supabase.from('users').select('*').eq('email', email).maybeSingle();
+      if (lookupError) throw lookupError;
+
+      let user = existing;
       if (!user) {
-        // Create new user (mock signup)
-        user = {
-          id: uuidv4(),
-          email,
-          name: email.split('@')[0],
-          role: email === 'admin@sevenghost.com' ? 'admin' : 'user',
-          createdAt: new Date().toISOString()
-        };
-        await db.collection('users').insertOne(user);
+        const { data, error } = await supabase
+          .from('users')
+          .insert({
+            email,
+            name: email.split('@')[0],
+            role: email === 'admin@sevenghost.com' ? 'admin' : 'user',
+          })
+          .select('*')
+          .single();
+        if (error) throw error;
+        user = data;
       }
-      
-      return NextResponse.json({ user, token: 'mock-jwt-token-' + user.id }, { headers: corsHeaders });
+
+      return json({ user: mapUser(user), token: `mock-jwt-token-${user.id}` });
     }
 
-    // POST /api/cart/add - Add item to cart
     if (segments[0] === 'cart' && segments[1] === 'add') {
       const { userId, productId, size, quantity = 1 } = body;
       if (!userId || !productId || !size) {
-        return NextResponse.json({ error: 'userId, productId, and size required' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'userId, productId, and size required' }, { status: 400 });
       }
 
-      const product = await db.collection('products').findOne({ id: productId });
-      if (!product) {
-        return NextResponse.json({ error: 'Product not found' }, { status: 404, headers: corsHeaders });
-      }
+      const { data: productRow, error: productError } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
+      if (productError) throw productError;
+      if (!productRow) return json({ error: 'Product not found' }, { status: 404 });
 
-      let cart = await db.collection('carts').findOne({ userId });
-      if (!cart) {
-        cart = { userId, items: [], total: 0 };
-      }
-
-      const existingItemIndex = cart.items.findIndex(item => item.productId === productId && item.size === size);
-      if (existingItemIndex >= 0) {
-        cart.items[existingItemIndex].quantity += quantity;
+      const cart = await fetchCartRecord(supabase, userId);
+      const items = [...cart.items];
+      const index = items.findIndex((item) => item.productId === productId && item.size === size);
+      if (index >= 0) {
+        items[index].quantity += quantity;
       } else {
-        cart.items.push({
+        items.push({
           id: uuidv4(),
           productId,
-          name: product.name,
-          price: product.price,
-          image: product.images[0],
+          name: productRow.name,
+          price: productRow.price,
+          image: Array.isArray(productRow.images) ? productRow.images[0] : '',
           size,
-          quantity
+          quantity,
         });
       }
 
-      cart.total = cart.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      
-      await db.collection('carts').updateOne(
-        { userId },
-        { $set: cart },
-        { upsert: true }
-      );
-
-      return NextResponse.json({ cart }, { headers: corsHeaders });
+      return json({ cart: await upsertCart(supabase, userId, items) });
     }
 
-    // POST /api/cart/remove - Remove item from cart
     if (segments[0] === 'cart' && segments[1] === 'remove') {
       const { userId, itemId } = body;
       if (!userId || !itemId) {
-        return NextResponse.json({ error: 'userId and itemId required' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'userId and itemId required' }, { status: 400 });
       }
 
-      let cart = await db.collection('carts').findOne({ userId });
-      if (!cart) {
-        return NextResponse.json({ error: 'Cart not found' }, { status: 404, headers: corsHeaders });
-      }
-
-      cart.items = cart.items.filter(item => item.id !== itemId);
-      cart.total = cart.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
-      await db.collection('carts').updateOne({ userId }, { $set: cart });
-      return NextResponse.json({ cart }, { headers: corsHeaders });
+      const cart = await fetchCartRecord(supabase, userId);
+      return json({ cart: await upsertCart(supabase, userId, cart.items.filter((item) => item.id !== itemId)) });
     }
 
-    // POST /api/orders/create - Create order
     if (segments[0] === 'orders' && segments[1] === 'create') {
       const { userId, items, address, paymentMethod, total } = body;
       if (!userId || !items || !address || !paymentMethod) {
-        return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'Missing required fields' }, { status: 400 });
       }
 
-      // Get user info
-      const user = await db.collection('users').findOne({ id: userId });
-
-      const order = {
-        id: uuidv4(),
-        orderNumber: 'SG' + Date.now().toString().slice(-8),
+      const { data: userRow } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+      const orderNumber = body.orderNumber || generateOrderNumber();
+      const normalizedAddress = normalizeAddress(address);
+      const richOrderPayload = buildOrderPayload({
         userId,
-        userEmail: user?.email || 'guest',
-        userName: user?.name || address.name,
+        userRow,
         items,
-        address,
+        address: normalizedAddress,
         paymentMethod,
         total,
+        orderNumber,
+      });
+      const baseOrderPayload = {
+        user_id: userId,
+        items,
+        total,
         status: 'pending',
-        paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed',
-        createdAt: new Date().toISOString()
+        created_at: richOrderPayload.created_at,
       };
 
-      await db.collection('orders').insertOne(order);
-      
-      // Clear cart after order
-      await db.collection('carts').updateOne(
-        { userId },
-        { $set: { items: [], total: 0 } }
-      );
+      let data;
+      let error;
+      ({ data, error } = await supabase.from('orders').insert(richOrderPayload).select('*').single());
+      if (error && isMissingColumnError(error)) {
+        ({ data, error } = await supabase.from('orders').insert(baseOrderPayload).select('*').single());
+      }
+      if (error) throw error;
 
-      return NextResponse.json({ order }, { headers: corsHeaders });
+      await upsertCart(supabase, userId, []);
+      return json({
+        order: {
+          ...mapOrder(data),
+          userName: userRow?.name || normalizedAddress.name || '',
+          userEmail: userRow?.email || 'guest',
+          address: normalizedAddress,
+          paymentMethod,
+          paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed',
+          orderNumber,
+        },
+      });
     }
 
-    // POST /api/payment/create - Mock Razorpay order
     if (segments[0] === 'payment' && segments[1] === 'create') {
-      const { amount, currency = 'INR' } = body;
-      if (!amount) {
-        return NextResponse.json({ error: 'Amount required' }, { status: 400, headers: corsHeaders });
+      const { userId, items, address, amount, total, currency = 'INR' } = body;
+      if (!userId || !items || !address || !amount) {
+        return json({ error: 'userId, items, address, and amount are required' }, { status: 400 });
       }
 
-      // Check if Razorpay is configured
-      const settings = await db.collection('settings').findOne({ id: 'app_settings' });
-      const isRazorpayLive = settings?.razorpay?.configured && settings?.payment?.mode === 'live';
+      const settings = await getSettingsRecord(supabase);
+      const keyId = settings?.razorpay?.keyId?.trim();
+      const keySecret = settings?.razorpay?.keySecret?.trim();
+      const { data: userRow } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+      const orderNumber = generateOrderNumber();
+      const normalizedAddress = normalizeAddress(address);
+      const orderPayload = buildOrderPayload({
+        userId,
+        userRow,
+        items,
+        address: normalizedAddress,
+        paymentMethod: 'razorpay',
+        total: total ?? amount,
+        orderNumber,
+      });
+      const isRazorpayLive =
+        settings?.payment?.razorpayEnabled &&
+        settings?.payment?.mode === 'live' &&
+        settings?.razorpay?.configured &&
+        keyId &&
+        keySecret;
 
-      // Mock Razorpay order response
-      const razorpayOrder = {
-        id: 'order_' + uuidv4().substring(0, 14),
-        amount: amount * 100,
-        currency,
-        status: 'created',
-        created_at: Date.now(),
-        mock: !isRazorpayLive
-      };
+      const { data: createdOrder, error: createOrderError } = await supabase
+        .from('orders')
+        .insert(orderPayload)
+        .select('*')
+        .single();
+      if (createOrderError) throw createOrderError;
 
-      return NextResponse.json({ order: razorpayOrder, isLive: isRazorpayLive }, { headers: corsHeaders });
+      if (isRazorpayLive) {
+        const razorpayRes = await fetch('https://api.razorpay.com/v1/orders', {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            amount: amount * 100,
+            currency,
+            receipt: orderNumber,
+            notes: {
+              internal_order_id: createdOrder.id,
+              order_number: orderNumber,
+              customer_name: normalizedAddress.name || '',
+            },
+          }),
+        });
+
+        const razorpayOrder = await razorpayRes.json();
+        if (!razorpayRes.ok) {
+          await supabase
+            .from('orders')
+            .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+            .eq('id', createdOrder.id);
+          throw new Error(razorpayOrder?.error?.description || 'Failed to create Razorpay order. Check Razorpay key ID/secret and test/live mode.');
+        }
+
+        const { error: updateOrderError } = await supabase
+          .from('orders')
+          .update({
+            razorpay_order_id: razorpayOrder.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', createdOrder.id);
+        if (updateOrderError && !isMissingColumnError(updateOrderError)) throw updateOrderError;
+
+        return json({
+          order: razorpayOrder,
+          appOrder: {
+            ...mapOrder(createdOrder),
+            orderNumber,
+            address: normalizedAddress,
+            userName: userRow?.name || normalizedAddress.name || '',
+            userEmail: userRow?.email || 'guest',
+          },
+          isLive: true,
+          keyId,
+        });
+      }
+
+      const mockRazorpayOrderId = `order_${uuidv4().substring(0, 14)}`;
+      const { error: updateMockOrderError } = await supabase
+        .from('orders')
+        .update({
+          razorpay_order_id: mockRazorpayOrderId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', createdOrder.id);
+      if (updateMockOrderError && !isMissingColumnError(updateMockOrderError)) throw updateMockOrderError;
+
+      return json({
+        order: {
+          id: mockRazorpayOrderId,
+          amount: amount * 100,
+          currency,
+          status: 'created',
+          created_at: Date.now(),
+          mock: true,
+        },
+        appOrder: {
+          ...mapOrder(createdOrder),
+          orderNumber,
+          address: normalizedAddress,
+          userName: userRow?.name || normalizedAddress.name || '',
+          userEmail: userRow?.email || 'guest',
+        },
+        isLive: false,
+        keyId,
+      });
     }
 
-    // POST /api/payment/verify - Mock payment verification
     if (segments[0] === 'payment' && segments[1] === 'verify') {
-      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
-      
-      // Mock verification (always succeeds in mock mode)
-      return NextResponse.json({ 
-        verified: true, 
-        message: 'Payment verified successfully' 
-      }, { headers: corsHeaders });
-    }
-
-    // POST /api/admin/products - Add product (admin)
-    if (segments[0] === 'admin' && segments[1] === 'products') {
-      const { name, category, type, price, originalPrice, images, sizes, stock, description, featured } = body;
-      if (!name || !category || !type || !price) {
-        return NextResponse.json({ error: 'Missing required fields' }, { status: 400, headers: corsHeaders });
+      const settings = await getSettingsRecord(supabase);
+      const keySecret = settings?.razorpay?.keySecret;
+      const { orderId, userId, razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
+      if (!orderId || !userId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        return json({ error: 'Missing order or Razorpay verification fields' }, { status: 400 });
       }
 
-      const product = {
-        id: uuidv4(),
-        name,
-        category,
-        type,
-        price: parseInt(price),
-        originalPrice: parseInt(originalPrice) || parseInt(price),
-        images: images || [],
-        sizes: sizes || ['S', 'M', 'L', 'XL'],
-        stock: parseInt(stock) || 0,
-        description: description || '',
-        featured: featured || false,
-        createdAt: new Date().toISOString()
+      const verifyUpdatePayload = {
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+        payment_status: 'completed',
+        status: 'confirmed',
+        updated_at: new Date().toISOString(),
       };
+      const isRazorpayLive =
+        settings?.payment?.razorpayEnabled &&
+        settings?.payment?.mode === 'live' &&
+        settings?.razorpay?.configured &&
+        keySecret;
 
-      await db.collection('products').insertOne(product);
-      return NextResponse.json({ product }, { headers: corsHeaders });
+      if (!isRazorpayLive) {
+        const { data: orderRow, error: updateError } = await supabase
+          .from('orders')
+          .update(verifyUpdatePayload)
+          .eq('id', orderId)
+          .select('*')
+          .single();
+        if (updateError && !isMissingColumnError(updateError)) throw updateError;
+        if (updateError && isMissingColumnError(updateError)) {
+          const { error: fallbackUpdateError } = await supabase
+            .from('orders')
+            .update({ payment_status: 'completed', status: 'confirmed', updated_at: new Date().toISOString() })
+            .eq('id', orderId);
+          if (fallbackUpdateError) throw fallbackUpdateError;
+        }
+        await upsertCart(supabase, userId, []);
+        return json({ verified: true, message: 'Mock payment verified successfully', order: orderRow ? mapOrder(orderRow) : null });
+      }
+
+      const expectedSignature = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
+
+      if (expectedSignature !== razorpay_signature) {
+        await supabase
+          .from('orders')
+          .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+          .eq('id', orderId);
+        return json({ error: 'Payment verification failed' }, { status: 400 });
+      }
+
+      const { data: orderRow, error: updateError } = await supabase
+        .from('orders')
+        .update(verifyUpdatePayload)
+        .eq('id', orderId)
+        .select('*')
+        .single();
+      if (updateError && !isMissingColumnError(updateError)) throw updateError;
+
+      if (updateError && isMissingColumnError(updateError)) {
+        const { error: fallbackUpdateError } = await supabase
+          .from('orders')
+          .update({ payment_status: 'completed', status: 'confirmed', updated_at: new Date().toISOString() })
+          .eq('id', orderId);
+        if (fallbackUpdateError) throw fallbackUpdateError;
+      }
+
+      await upsertCart(supabase, userId, []);
+
+      return json({ verified: true, message: 'Payment verified successfully', order: orderRow ? mapOrder(orderRow) : null });
     }
 
-    // POST /api/admin/settings - Update settings
+    if (segments[0] === 'admin' && segments[1] === 'products') {
+      const { name, category, type, price } = body;
+      if (!name || !category || !type || !price) {
+        return json({ error: 'Missing required fields' }, { status: 400 });
+      }
+
+      const { data, error } = await supabase
+        .from('products')
+        .insert({
+          name,
+          category,
+          type,
+          price: Number.parseInt(price, 10),
+          images: Array.isArray(body.images) ? body.images : [],
+          stock: Number.parseInt(body.stock, 10) || 0,
+          created_at: new Date().toISOString(),
+        })
+        .select('*')
+        .single();
+      if (error) throw error;
+      return json({
+        product: {
+          ...mapProduct(data),
+          originalPrice: Number.parseInt(body.originalPrice, 10) || Number.parseInt(price, 10),
+          sizes: Array.isArray(body.sizes) && body.sizes.length > 0 ? body.sizes : ['S', 'M', 'L', 'XL'],
+          description: body.description || 'Premium everyday essential.',
+          featured: body.featured ?? true,
+        },
+      });
+    }
+
     if (segments[0] === 'admin' && segments[1] === 'settings') {
-      const { supabase, razorpay, payment, store } = body;
-      
-      const updateData = { updatedAt: new Date().toISOString() };
-      
-      if (supabase) {
-        updateData.supabase = {
-          url: supabase.url || '',
-          anonKey: supabase.anonKey || '',
-          serviceRoleKey: supabase.serviceRoleKey || '',
-          configured: !!(supabase.url && supabase.anonKey)
-        };
-      }
-      
-      if (razorpay) {
-        updateData.razorpay = {
-          keyId: razorpay.keyId || '',
-          keySecret: razorpay.keySecret || '',
-          configured: !!(razorpay.keyId && razorpay.keySecret),
-          mode: razorpay.mode || 'test'
-        };
-      }
-      
-      if (payment) {
-        updateData.payment = {
-          mode: payment.mode || 'mock',
-          codEnabled: payment.codEnabled !== false,
-          razorpayEnabled: payment.razorpayEnabled || false
-        };
-      }
-      
-      if (store) {
-        updateData.store = {
-          name: store.name || 'SevenGhost',
-          currency: store.currency || 'INR',
-          freeShippingThreshold: parseInt(store.freeShippingThreshold) || 999
-        };
-      }
-
-      await db.collection('settings').updateOne(
-        { id: 'app_settings' },
-        { $set: updateData },
-        { upsert: true }
+      const current = await getSettingsRecord(supabase);
+      const nextSupabase = body.supabase
+        ? {
+            url: body.supabase.url || '',
+            anonKey: isMaskedSecret(body.supabase.anonKey) ? current.supabase?.anonKey || '' : body.supabase.anonKey || '',
+            serviceRoleKey: isMaskedSecret(body.supabase.serviceRoleKey) ? current.supabase?.serviceRoleKey || '' : body.supabase.serviceRoleKey || '',
+            configured: Boolean(body.supabase.url && (isMaskedSecret(body.supabase.anonKey) ? current.supabase?.anonKey : body.supabase.anonKey)),
+          }
+        : current.supabase;
+      const nextRazorpay = body.razorpay
+        ? {
+            keyId: body.razorpay.keyId || '',
+            keySecret: isMaskedSecret(body.razorpay.keySecret) ? current.razorpay?.keySecret || '' : body.razorpay.keySecret || '',
+            configured: Boolean(body.razorpay.keyId && (isMaskedSecret(body.razorpay.keySecret) ? current.razorpay?.keySecret : body.razorpay.keySecret)),
+            mode: body.razorpay.mode || 'test',
+          }
+        : current.razorpay;
+      const { error } = await supabase.from('settings').upsert(
+        {
+          id: 'app_settings',
+          supabase: nextSupabase,
+          razorpay: nextRazorpay,
+          payment: body.payment
+            ? {
+                mode: body.payment.mode || 'mock',
+                codEnabled: body.payment.codEnabled !== false,
+                razorpayEnabled: Boolean(body.payment.razorpayEnabled),
+              }
+            : current.payment,
+          store: body.store
+            ? {
+                name: body.store.name || 'SevenGhost',
+                currency: body.store.currency || 'INR',
+                freeShippingThreshold: Number.parseInt(body.store.freeShippingThreshold, 10) || 999,
+              }
+            : current.store,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
       );
-
-      return NextResponse.json({ success: true, message: 'Settings updated' }, { headers: corsHeaders });
+      if (error && !String(error.message || '').toLowerCase().includes('settings')) throw error;
+      return json({ success: true, message: 'Settings updated' });
     }
 
-    // POST /api/wishlist/toggle - Toggle wishlist item
     if (segments[0] === 'wishlist' && segments[1] === 'toggle') {
       const { userId, productId } = body;
       if (!userId || !productId) {
-        return NextResponse.json({ error: 'userId and productId required' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'userId and productId required' }, { status: 400 });
       }
 
-      let wishlist = await db.collection('wishlists').findOne({ userId });
-      if (!wishlist) {
-        wishlist = { userId, items: [] };
-      }
-
-      const existingIndex = wishlist.items.findIndex(id => id === productId);
-      if (existingIndex >= 0) {
-        wishlist.items.splice(existingIndex, 1);
-      } else {
-        wishlist.items.push(productId);
-      }
-
-      await db.collection('wishlists').updateOne(
-        { userId },
-        { $set: wishlist },
-        { upsert: true }
-      );
-
-      return NextResponse.json({ wishlist }, { headers: corsHeaders });
+      const wishlist = await fetchWishlistRecord(supabase, userId);
+      const items = wishlist.items.includes(productId)
+        ? wishlist.items.filter((itemId) => itemId !== productId)
+        : [...wishlist.items, productId];
+      return json({ wishlist: await upsertWishlist(supabase, userId, items) });
     }
 
-    return NextResponse.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
+    return json({ error: 'Not found' }, { status: 404 });
   } catch (error) {
     console.error('POST Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+    return json({ error: enrichSupabaseError(error) }, { status: 500 });
   }
 }
 
-// ============== PUT HANDLERS ==============
 export async function PUT(request) {
+  const segments = getPathSegments(request);
+  const body = await request.json();
+  const { client: supabase } = getClientOrFallback(segments);
+
+  if (!supabase) {
+    return json({ error: 'Supabase environment variables are missing' }, { status: 500 });
+  }
+
   try {
-    const segments = getPathSegments(request);
-    const body = await request.json();
-    const { db } = await connectToDatabase();
-
-    // PUT /api/admin/products/:id - Update product
     if (segments[0] === 'admin' && segments[1] === 'products' && segments.length === 3) {
-      const productId = segments[2];
-      const updateData = { ...body, updatedAt: new Date().toISOString() };
-      delete updateData.id;
-      delete updateData._id;
-      
-      // Convert price and stock to integers
-      if (updateData.price) updateData.price = parseInt(updateData.price);
-      if (updateData.originalPrice) updateData.originalPrice = parseInt(updateData.originalPrice);
-      if (updateData.stock) updateData.stock = parseInt(updateData.stock);
-
-      const result = await db.collection('products').updateOne(
-        { id: productId },
-        { $set: updateData }
-      );
-
-      if (result.matchedCount === 0) {
-        return NextResponse.json({ error: 'Product not found' }, { status: 404, headers: corsHeaders });
-      }
-
-      const product = await db.collection('products').findOne({ id: productId });
-      return NextResponse.json({ product }, { headers: corsHeaders });
+      const { data, error } = await supabase
+        .from('products')
+        .update({
+          name: body.name,
+          category: body.category,
+          type: body.type,
+          price: Number.parseInt(body.price, 10),
+          images: Array.isArray(body.images) ? body.images : [],
+          stock: Number.parseInt(body.stock, 10) || 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', segments[2])
+        .select('*')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return json({ error: 'Product not found' }, { status: 404 });
+      return json({
+        product: {
+          ...mapProduct(data),
+          originalPrice: Number.parseInt(body.originalPrice, 10) || Number.parseInt(body.price, 10),
+          sizes: Array.isArray(body.sizes) && body.sizes.length > 0 ? body.sizes : ['S', 'M', 'L', 'XL'],
+          description: body.description || 'Premium everyday essential.',
+          featured: body.featured ?? true,
+        },
+      });
     }
 
-    // PUT /api/admin/orders/:id - Update order status
     if (segments[0] === 'admin' && segments[1] === 'orders' && segments.length === 3) {
-      const orderId = segments[2];
-      const { status, paymentStatus } = body;
-
-      const updateData = { updatedAt: new Date().toISOString() };
-      if (status) updateData.status = status;
-      if (paymentStatus) updateData.paymentStatus = paymentStatus;
-
-      const result = await db.collection('orders').updateOne(
-        { id: orderId },
-        { $set: updateData }
-      );
-
-      if (result.matchedCount === 0) {
-        return NextResponse.json({ error: 'Order not found' }, { status: 404, headers: corsHeaders });
-      }
-
-      const order = await db.collection('orders').findOne({ id: orderId });
-      return NextResponse.json({ order }, { headers: corsHeaders });
+      const payload = { updated_at: new Date().toISOString() };
+      if (body.status) payload.status = body.status;
+      const { data, error } = await supabase.from('orders').update(payload).eq('id', segments[2]).select('*').maybeSingle();
+      if (error) throw error;
+      if (!data) return json({ error: 'Order not found' }, { status: 404 });
+      return json({ order: mapOrder(data) });
     }
 
-    // PUT /api/cart/update - Update cart item quantity
     if (segments[0] === 'cart' && segments[1] === 'update') {
       const { userId, itemId, quantity } = body;
       if (!userId || !itemId || quantity === undefined) {
-        return NextResponse.json({ error: 'userId, itemId, and quantity required' }, { status: 400, headers: corsHeaders });
+        return json({ error: 'userId, itemId, and quantity required' }, { status: 400 });
       }
 
-      let cart = await db.collection('carts').findOne({ userId });
-      if (!cart) {
-        return NextResponse.json({ error: 'Cart not found' }, { status: 404, headers: corsHeaders });
+      const cart = await fetchCartRecord(supabase, userId);
+      if (!cart.items.some((item) => item.id === itemId)) {
+        return json({ error: 'Cart item not found' }, { status: 404 });
       }
-
-      const itemIndex = cart.items.findIndex(item => item.id === itemId);
-      if (itemIndex >= 0) {
-        if (quantity <= 0) {
-          cart.items.splice(itemIndex, 1);
-        } else {
-          cart.items[itemIndex].quantity = quantity;
-        }
-      }
-
-      cart.total = cart.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
-      await db.collection('carts').updateOne({ userId }, { $set: cart });
-      return NextResponse.json({ cart }, { headers: corsHeaders });
+      const items = cart.items
+        .map((item) => (item.id === itemId ? { ...item, quantity } : item))
+        .filter((item) => item.quantity > 0);
+      return json({ cart: await upsertCart(supabase, userId, items) });
     }
 
-    return NextResponse.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
+    return json({ error: 'Not found' }, { status: 404 });
   } catch (error) {
     console.error('PUT Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+    return json({ error: enrichSupabaseError(error) }, { status: 500 });
   }
 }
 
-// ============== DELETE HANDLERS ==============
 export async function DELETE(request) {
+  const segments = getPathSegments(request);
+  const { client: supabase } = getClientOrFallback(segments);
+
+  if (!supabase) {
+    return json({ error: 'Supabase environment variables are missing' }, { status: 500 });
+  }
+
   try {
-    const segments = getPathSegments(request);
-    const { db } = await connectToDatabase();
-
-    // DELETE /api/admin/products/:id - Delete product
     if (segments[0] === 'admin' && segments[1] === 'products' && segments.length === 3) {
-      const productId = segments[2];
-      const result = await db.collection('products').deleteOne({ id: productId });
-
-      if (result.deletedCount === 0) {
-        return NextResponse.json({ error: 'Product not found' }, { status: 404, headers: corsHeaders });
-      }
-
-      return NextResponse.json({ message: 'Product deleted successfully' }, { headers: corsHeaders });
+      const { error } = await supabase.from('products').delete().eq('id', segments[2]);
+      if (error) throw error;
+      return json({ message: 'Product deleted successfully' });
     }
 
-    return NextResponse.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
+    return json({ error: 'Not found' }, { status: 404 });
   } catch (error) {
     console.error('DELETE Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
+    return json({ error: enrichSupabaseError(error) }, { status: 500 });
   }
 }

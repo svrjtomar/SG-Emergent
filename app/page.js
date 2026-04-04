@@ -187,6 +187,7 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -266,7 +267,7 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
               {store.wishlist.length > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-black text-white text-[9px] rounded-full flex items-center justify-center">{store.wishlist.length}</span>}
             </motion.button>
 
-            <Sheet>
+            <Sheet open={cartOpen} onOpenChange={setCartOpen}>
               <SheetTrigger asChild>
                 <motion.button whileHover={{ scale: 1.05 }} className="p-3 hover:bg-black/5 rounded-full relative">
                   <ShoppingBag size={18} strokeWidth={1.5} />
@@ -308,7 +309,7 @@ const Header = ({ store, currentPage, setCurrentPage, setShowAuth }) => {
                       <div className="pt-6 border-t mt-6">
                         <div className="flex justify-between text-sm mb-2"><span className="text-black/60">Subtotal</span><span>₹{store.cart.total.toLocaleString()}</span></div>
                         <div className="flex justify-between text-sm mb-6"><span className="text-black/60">Shipping</span><span className="text-green-700">Free</span></div>
-                        <Button className="w-full h-12 text-sm tracking-[0.15em] rounded-none" onClick={() => setCurrentPage('checkout')}>
+                        <Button className="w-full h-12 text-sm tracking-[0.15em] rounded-none" onClick={() => { setCartOpen(false); setCurrentPage('checkout'); }}>
                           CHECKOUT — ₹{store.cart.total.toLocaleString()}
                         </Button>
                       </div>
@@ -673,15 +674,121 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [loading, setLoading] = useState(false);
 
+  const loadRazorpayScript = () => new Promise((resolve) => {
+    if (window.Razorpay) { resolve(true); return; }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+
   const handlePlaceOrder = async () => {
     if (!address.name || !address.phone || !address.addressLine || !address.city || !address.pincode) { toast.error('Fill all fields'); return; }
     setLoading(true);
     try {
-      if (paymentMethod === 'razorpay') { toast.info('Simulating payment...'); await new Promise(r => setTimeout(r, 1500)); }
+      if (paymentMethod === 'razorpay') {
+        const paymentRes = await fetch('/api/payment/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: store.user.id,
+            items: store.cart.items,
+            address,
+            amount: store.cart.total,
+            total: store.cart.total,
+            currency: 'INR',
+          })
+        });
+        const paymentData = await paymentRes.json();
+        if (!paymentData.order || !paymentData.appOrder?.id) {
+          toast.error(paymentData.error || 'Failed to create payment');
+          return;
+        }
+
+        if (paymentData.isLive) {
+          const loaded = await loadRazorpayScript();
+          if (!loaded) {
+            toast.error('Failed to load Razorpay checkout');
+            return;
+          }
+
+          const verified = await new Promise((resolve) => {
+            const razorpay = new window.Razorpay({
+              key: paymentData.keyId,
+              amount: paymentData.order.amount,
+              currency: paymentData.order.currency,
+              name: 'SevenGhost',
+              description: 'Order payment',
+              order_id: paymentData.order.id,
+              prefill: {
+                name: address.name,
+                email: store.user?.email,
+                contact: address.phone,
+              },
+              theme: { color: '#000000' },
+              handler: async (response) => {
+                try {
+                  const verifyRes = await fetch('/api/payment/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      ...response,
+                      orderId: paymentData.appOrder.id,
+                      userId: store.user.id,
+                    }),
+                  });
+                  const verifyData = await verifyRes.json();
+                  if (!verifyData.verified) {
+                    toast.error(verifyData.error || 'Payment verification failed');
+                    resolve(false);
+                    return;
+                  }
+                  resolve(true);
+                } catch (error) {
+                  toast.error(error.message || 'Payment verification failed');
+                  resolve(false);
+                }
+              },
+              modal: {
+                ondismiss: () => resolve(false),
+              },
+            });
+            razorpay.open();
+          });
+
+          if (!verified) {
+            return;
+          }
+        } else {
+          const verifyRes = await fetch('/api/payment/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: paymentData.appOrder.id,
+              userId: store.user.id,
+              razorpay_order_id: paymentData.order.id,
+              razorpay_payment_id: `pay_${Date.now()}`,
+              razorpay_signature: 'mock_signature',
+            })
+          });
+          const verifyData = await verifyRes.json();
+          if (!verifyData.verified) {
+            toast.error(verifyData.error || 'Payment verification failed');
+            return;
+          }
+        }
+        store.setCart({ items: [], total: 0 });
+        toast.success(`Order ${paymentData.appOrder.orderNumber} placed!`);
+        setCurrentPage('orders');
+        return;
+      }
+
       const res = await fetch('/api/orders/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: store.user.id, items: store.cart.items, address, paymentMethod, total: store.cart.total }) });
       const data = await res.json();
-      if (data.order) { store.setCart({ items: [], total: 0 }); toast.success('Order placed!'); setCurrentPage('orders'); }
-    } catch (e) { toast.error('Failed'); } finally { setLoading(false); }
+      if (data.order) { store.setCart({ items: [], total: 0 }); toast.success(`Order ${data.order.orderNumber} placed!`); setCurrentPage('orders'); }
+      else { toast.error(data.error || 'Failed to place order'); }
+    } catch (e) { toast.error(e.message || 'Failed to place order'); } finally { setLoading(false); }
   };
 
   if (!store.user) return <div className="min-h-screen flex items-center justify-center pt-24"><div className="text-center"><p className="text-black/40 mb-6">Please login</p><Button onClick={() => setCurrentPage('home')} className="rounded-none">Go Home</Button></div></div>;
@@ -745,7 +852,7 @@ const OrdersPage = ({ store, setCurrentPage }) => {
         <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-3xl font-serif mb-12 text-center">My Orders</motion.h1>
         {loading ? <div className="space-y-4">{[1,2,3].map(i => <div key={i} className="h-32 bg-white animate-pulse" />)}</div>
         : orders.length === 0 ? <div className="bg-white p-16 text-center"><Package size={48} className="mx-auto mb-6 opacity-20" /><p className="text-black/40 mb-6">No orders yet</p><Button onClick={() => setCurrentPage('shop')} className="rounded-none">Shop</Button></div>
-        : <div className="space-y-6">{orders.map((order, idx) => (<motion.div key={order.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.1 }} className="bg-white p-6 lg:p-8"><div className="flex flex-wrap justify-between items-start gap-4 mb-6"><div><p className="text-[11px] text-black/40">ORDER #{order.id.slice(0, 8).toUpperCase()}</p><p className="text-sm mt-1">{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</p></div><div className="flex gap-3"><Badge variant="secondary" className="rounded-none text-[10px]">{order.status}</Badge><Badge variant="outline" className="rounded-none text-[10px]">{order.paymentMethod === 'cod' ? 'COD' : 'PAID'}</Badge></div></div><div className="flex flex-wrap gap-4">{order.items.map(item => (<div key={item.id} className="flex gap-3"><img src={item.image} alt={item.name} className="w-16 h-20 object-cover" /><div><p className="text-sm font-medium">{item.name}</p><p className="text-xs text-black/50">{item.size} × {item.quantity}</p></div></div>))}</div><Separator className="my-6" /><div className="flex justify-between items-center"><p className="text-sm text-black/50">{order.address?.city}</p><p className="font-medium">₹{order.total.toLocaleString()}</p></div></motion.div>))}</div>}
+        : <div className="space-y-6">{orders.map((order, idx) => (<motion.div key={order.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.1 }} className="bg-white p-6 lg:p-8"><div className="flex flex-wrap justify-between items-start gap-4 mb-6"><div><p className="text-[11px] text-black/40">ORDER #{order.orderNumber || order.id.slice(0, 8).toUpperCase()}</p><p className="text-sm mt-1">{new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</p></div><div className="flex gap-3"><Badge variant="secondary" className="rounded-none text-[10px]">{order.status}</Badge><Badge variant="outline" className="rounded-none text-[10px]">{order.paymentMethod === 'cod' ? 'COD' : 'PAID'}</Badge></div></div><div className="flex flex-wrap gap-4">{order.items.map(item => (<div key={item.id} className="flex gap-3"><img src={item.image} alt={item.name} className="w-16 h-20 object-cover" /><div><p className="text-sm font-medium">{item.name}</p><p className="text-xs text-black/50">{item.size} × {item.quantity}</p></div></div>))}</div><Separator className="my-6" /><div className="flex justify-between items-center"><p className="text-sm text-black/50">{order.address?.city}</p><p className="font-medium">₹{order.total.toLocaleString()}</p></div></motion.div>))}</div>}
       </div>
     </div>
   );
@@ -771,6 +878,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [selectedOrder, setSelectedOrder] = useState(null);
   const [products, setProducts] = useState([]);
   const [users, setUsers] = useState([]);
   const [settings, setSettings] = useState(null);
@@ -826,7 +934,8 @@ const AdminPanel = ({ store, setCurrentPage }) => {
         fetchAll();
         store.fetchProducts();
       }
-    } catch (e) { toast.error('Failed to save product'); }
+      else { toast.error(result.error || 'Failed to save product'); }
+    } catch (e) { toast.error(e.message || 'Failed to save product'); }
   };
 
   const handleDeleteProduct = async (productId) => {
@@ -879,10 +988,19 @@ const AdminPanel = ({ store, setCurrentPage }) => {
     if (orderFilter !== 'all' && o.status !== orderFilter) return false;
     if (orderSearch) {
       const search = orderSearch.toLowerCase();
-      return o.id.toLowerCase().includes(search) || o.address?.name?.toLowerCase().includes(search) || o.address?.phone?.includes(search);
+      return o.id.toLowerCase().includes(search) || o.orderNumber?.toLowerCase()?.includes(search) || o.address?.name?.toLowerCase().includes(search) || o.address?.phone?.includes(search);
     }
     return true;
   });
+
+  const orderDisplayId = (order) => order?.orderNumber || order?.id?.slice(0, 8)?.toUpperCase();
+  const orderPaymentLabel = (order) => order?.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Razorpay';
+  const orderPaymentBadge = (order) => {
+    if (order?.paymentMethod === 'cod') return 'COD';
+    if (order?.paymentStatus) return order.paymentStatus.toUpperCase();
+    return 'PAID';
+  };
+  const orderAddressLines = (address = {}) => [address.address, address.city, address.state, address.pincode].filter(Boolean);
 
   if (store.user?.role !== 'admin') {
     return <div className="min-h-screen flex items-center justify-center"><p className="text-black/40">Access denied. Admin only.</p></div>;
@@ -946,6 +1064,138 @@ const AdminPanel = ({ store, setCurrentPage }) => {
         </header>
 
         <div className="p-8">
+          <Dialog open={!!selectedOrder} onOpenChange={(open) => { if (!open) setSelectedOrder(null); }}>
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              {selectedOrder && (
+                <>
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center justify-between gap-4">
+                      <span>Order #{orderDisplayId(selectedOrder)}</span>
+                      <Badge variant="secondary" className="capitalize">{selectedOrder.status}</Badge>
+                    </DialogTitle>
+                    <DialogDescription>
+                      Placed on {selectedOrder.createdAt ? new Date(selectedOrder.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-'}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="grid gap-6 lg:grid-cols-3">
+                    <Card className="lg:col-span-2">
+                      <CardHeader>
+                        <CardTitle className="text-base">Items</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {(selectedOrder.items || []).map((item, index) => (
+                          <div key={`${item.id || item.productId || item.name}-${index}`} className="flex items-center gap-4 border rounded-lg p-4">
+                            <img src={item.image} alt={item.name} className="w-16 h-20 object-cover rounded" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-sm">{item.name}</p>
+                              <p className="text-xs text-black/50 mt-1">Size: {item.size || '-'}</p>
+                              <p className="text-xs text-black/50">Quantity: {item.quantity || 1}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-medium">₹{((item.price || 0) * (item.quantity || 1)).toLocaleString()}</p>
+                              <p className="text-xs text-black/50">₹{(item.price || 0).toLocaleString()} each</p>
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+
+                    <div className="space-y-6">
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Payment</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3 text-sm">
+                          <div className="flex items-start gap-3">
+                            <Wallet size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">{orderPaymentLabel(selectedOrder)}</p>
+                              <p className="text-black/50">Status: {selectedOrder.paymentStatus || (selectedOrder.paymentMethod === 'cod' ? 'pending' : 'paid')}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <CreditCard size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Order Total</p>
+                              <p className="text-black/50">₹{(selectedOrder.total || 0).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <FileText size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Database ID</p>
+                              <p className="text-black/50 break-all">{selectedOrder.id}</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Customer</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3 text-sm">
+                          <div className="flex items-start gap-3">
+                            <User size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">{selectedOrder.userName || selectedOrder.address?.name || 'Guest Customer'}</p>
+                              <p className="text-black/50">User ID: {selectedOrder.userId || '-'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <Mail size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Email</p>
+                              <p className="text-black/50 break-all">{selectedOrder.userEmail || selectedOrder.address?.email || '-'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <Phone size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Phone</p>
+                              <p className="text-black/50">{selectedOrder.address?.phone || '-'}</p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Shipping</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3 text-sm">
+                          <div className="flex items-start gap-3">
+                            <Truck size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Fulfilment Status</p>
+                              <p className="text-black/50 capitalize">{selectedOrder.status || 'pending'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <MapPin size={16} className="mt-0.5 text-black/40" />
+                            <div>
+                              <p className="font-medium">Delivery Address</p>
+                              {orderAddressLines(selectedOrder.address).length > 0
+                                ? orderAddressLines(selectedOrder.address).map((line, index) => (
+                                    <p key={`${line}-${index}`} className="text-black/50">{line}</p>
+                                  ))
+                                : <p className="text-black/50">No shipping address saved</p>}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setSelectedOrder(null)}>Close</Button>
+                  </DialogFooter>
+                </>
+              )}
+            </DialogContent>
+          </Dialog>
+
           {/* Dashboard */}
           {activeTab === 'dashboard' && (
             <div className="space-y-8">
@@ -1017,7 +1267,11 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                       <tbody>
                         {(stats?.recentOrders || []).map((order) => (
                           <tr key={order.id} className="border-b hover:bg-black/5">
-                            <td className="py-3 px-4 text-sm font-medium">#{order.id.slice(0, 8)}</td>
+                            <td className="py-3 px-4 text-sm font-medium">
+                              <button onClick={() => setSelectedOrder(order)} className="hover:underline underline-offset-4">
+                                #{orderDisplayId(order)}
+                              </button>
+                            </td>
                             <td className="py-3 px-4 text-sm">{order.userName || order.address?.name}</td>
                             <td className="py-3 px-4 text-sm font-medium">₹{order.total.toLocaleString()}</td>
                             <td className="py-3 px-4">
@@ -1125,7 +1379,11 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                       <tbody>
                         {filteredOrders.map((order) => (
                           <tr key={order.id} className="border-b hover:bg-black/5">
-                            <td className="py-4 px-6 font-medium text-sm">#{order.orderNumber || order.id.slice(0, 8)}</td>
+                            <td className="py-4 px-6 font-medium text-sm">
+                              <button onClick={() => setSelectedOrder(order)} className="hover:underline underline-offset-4">
+                                #{orderDisplayId(order)}
+                              </button>
+                            </td>
                             <td className="py-4 px-6">
                               <div>
                                 <p className="text-sm font-medium">{order.userName || order.address?.name}</p>
@@ -1134,7 +1392,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                             </td>
                             <td className="py-4 px-6 text-sm">{order.items?.length} items</td>
                             <td className="py-4 px-6 text-sm font-medium">₹{order.total.toLocaleString()}</td>
-                            <td className="py-4 px-6"><Badge variant="outline">{order.paymentMethod === 'cod' ? 'COD' : 'Paid'}</Badge></td>
+                            <td className="py-4 px-6"><Badge variant="outline">{orderPaymentBadge(order)}</Badge></td>
                             <td className="py-4 px-6">
                               <Select value={order.status} onValueChange={(v) => handleUpdateOrderStatus(order.id, v)}>
                                 <SelectTrigger className="w-32 h-8"><SelectValue /></SelectTrigger>
