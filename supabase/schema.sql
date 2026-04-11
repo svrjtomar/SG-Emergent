@@ -68,6 +68,7 @@ create table if not exists settings (
   razorpay jsonb not null default '{}'::jsonb,
   payment jsonb not null default '{}'::jsonb,
   store jsonb not null default '{}'::jsonb,
+  cms jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );

@@ -14,6 +14,18 @@ const defaultSettings = {
   razorpay: { keyId: '', keySecret: '', configured: false, mode: 'test' },
   payment: { mode: 'mock', codEnabled: true, razorpayEnabled: false },
   store: { name: 'SevenGhost', currency: 'INR', freeShippingThreshold: 999 },
+  cms: {
+    heroBadge: 'New Collection 2025',
+    heroTitle: 'Wear Your Identity',
+    heroSubtitle: 'Premium quality t-shirts designed for minimal aesthetics and superior comfort.',
+    heroImage: 'https://images.unsplash.com/photo-1611042553484-d61f84d22784?w=1920',
+    marqueeText: 'Free Shipping Over ₹999 • Premium Quality • Easy Returns',
+    featuredHeading: 'Featured Pieces',
+    categoryHeading: 'Shop by Style',
+    footerBlurb: 'Premium fashion for the modern individual.',
+    footerEmailPlaceholder: 'Email',
+    footerCopyright: '© 2025 SevenGhost. All rights reserved.',
+  },
 };
 
 export async function OPTIONS() {
@@ -112,7 +124,7 @@ function mapOrder(row) {
     id: row.id,
     orderNumber: row.order_number || `SG${String(row.id).slice(0, 8).toUpperCase()}`,
     userId: row.user_id,
-    userEmail: row.user_email || 'guest',
+    userEmail: row.user_email || '',
     userName: row.user_name || '',
     items: Array.isArray(row.items) ? row.items : [],
     address: row.address || {},
@@ -164,7 +176,7 @@ function buildOrderPayload({ userId, userRow, items, address, paymentMethod, tot
   return {
     user_id: userId,
     order_number: orderNumber,
-    user_email: userRow?.email || normalizedAddress.email || 'guest',
+    user_email: normalizedAddress.email || userRow?.email || '',
     user_name: userRow?.name || normalizedAddress.name || '',
     items,
     address: normalizedAddress,
@@ -200,6 +212,7 @@ function buildReadFallback(segments) {
     };
   }
   if (segments[0] === 'admin' && segments[1] === 'settings') return { settings: maskSettings(defaultSettings) };
+  if (segments[0] === 'settings') return { settings: defaultSettings };
   if (segments[0] === 'seed') return { message: 'Supabase mode enabled. Seed via SQL or Supabase Studio.', count: 0 };
   return null;
 }
@@ -217,12 +230,15 @@ async function getSettingsRecord(supabase) {
     return { id: 'app_settings', ...defaultSettings };
   }
   if (!data) return { id: 'app_settings', ...defaultSettings };
+  const storeSettings = data.store || defaultSettings.store;
+  const cmsSettings = data.cms || data.store?.cms || data.store?._cms || defaultSettings.cms;
   return {
     id: data.id,
     supabase: data.supabase || defaultSettings.supabase,
     razorpay: data.razorpay || defaultSettings.razorpay,
     payment: data.payment || defaultSettings.payment,
-    store: data.store || defaultSettings.store,
+    store: storeSettings,
+    cms: cmsSettings,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
@@ -354,7 +370,7 @@ export async function GET(request) {
         return {
           ...order,
           userName: order.userName || user?.name || '',
-          userEmail: order.userEmail !== 'guest' ? order.userEmail : user?.email || 'guest',
+          userEmail: order.userEmail || user?.email || '',
         };
       });
       if (search) {
@@ -432,6 +448,10 @@ export async function GET(request) {
 
     if (segments[0] === 'admin' && segments[1] === 'settings') {
       return json({ settings: maskSettings(await getSettingsRecord(supabase)) });
+    }
+
+    if (segments[0] === 'settings') {
+      return json({ settings: await getSettingsRecord(supabase) });
     }
 
     if (segments[0] === 'wishlist' && segments.length === 2) {
@@ -567,7 +587,7 @@ export async function POST(request) {
         order: {
           ...mapOrder(data),
           userName: userRow?.name || normalizedAddress.name || '',
-          userEmail: userRow?.email || 'guest',
+          userEmail: normalizedAddress.email || userRow?.email || '',
           address: normalizedAddress,
           paymentMethod,
           paymentStatus: paymentMethod === 'cod' ? 'pending' : 'completed',
@@ -655,7 +675,7 @@ export async function POST(request) {
             orderNumber,
             address: normalizedAddress,
             userName: userRow?.name || normalizedAddress.name || '',
-            userEmail: userRow?.email || 'guest',
+            userEmail: normalizedAddress.email || userRow?.email || '',
           },
           isLive: true,
           keyId,
@@ -686,7 +706,7 @@ export async function POST(request) {
           orderNumber,
           address: normalizedAddress,
           userName: userRow?.name || normalizedAddress.name || '',
-          userEmail: userRow?.email || 'guest',
+          userEmail: normalizedAddress.email || userRow?.email || '',
         },
         isLive: false,
         keyId,
@@ -817,30 +837,50 @@ export async function POST(request) {
             mode: body.razorpay.mode || 'test',
           }
         : current.razorpay;
-      const { error } = await supabase.from('settings').upsert(
-        {
-          id: 'app_settings',
-          supabase: nextSupabase,
-          razorpay: nextRazorpay,
-          payment: body.payment
-            ? {
-                mode: body.payment.mode || 'mock',
-                codEnabled: body.payment.codEnabled !== false,
-                razorpayEnabled: Boolean(body.payment.razorpayEnabled),
-              }
-            : current.payment,
-          store: body.store
-            ? {
-                name: body.store.name || 'SevenGhost',
-                currency: body.store.currency || 'INR',
-                freeShippingThreshold: Number.parseInt(body.store.freeShippingThreshold, 10) || 999,
-              }
-            : current.store,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' }
-      );
-      if (error && !String(error.message || '').toLowerCase().includes('settings')) throw error;
+      const nextPayment = body.payment
+        ? {
+            mode: body.payment.mode || 'mock',
+            codEnabled: body.payment.codEnabled !== false,
+            razorpayEnabled: Boolean(body.payment.razorpayEnabled),
+          }
+        : current.payment;
+      const nextStore = body.store
+        ? {
+            name: body.store.name || 'SevenGhost',
+            currency: body.store.currency || 'INR',
+            freeShippingThreshold: Number.parseInt(body.store.freeShippingThreshold, 10) || 999,
+          }
+        : current.store;
+      const nextCms = body.cms
+        ? {
+            ...current.cms,
+            ...body.cms,
+          }
+        : current.cms;
+      const settingsPayload = {
+        id: 'app_settings',
+        supabase: nextSupabase,
+        razorpay: nextRazorpay,
+        payment: nextPayment,
+        store: nextStore,
+        cms: nextCms,
+        updated_at: new Date().toISOString(),
+      };
+
+      let { error } = await supabase.from('settings').upsert(settingsPayload, { onConflict: 'id' });
+      if (error && isMissingColumnError(error) && /cms/i.test(String(error.message || ''))) {
+        ({ error } = await supabase.from('settings').upsert(
+          {
+            ...settingsPayload,
+            store: {
+              ...nextStore,
+              _cms: nextCms,
+            },
+          },
+          { onConflict: 'id' }
+        ));
+      }
+      if (error) throw error;
       return json({ success: true, message: 'Settings updated' });
     }
 

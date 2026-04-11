@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,12 +44,52 @@ const staggerContainer = {
   visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
 };
 
+const normalizePage = (page) => {
+  if (!page) return 'home';
+  if (typeof page === 'object') return { ...page };
+  return page;
+};
+
+const routeForPage = (page) => {
+  const normalized = normalizePage(page);
+  if (typeof normalized === 'object') {
+    if (normalized.page === 'product' && normalized.id) return `/product/${normalized.id}`;
+    if (normalized.page === 'admin' && normalized.orderNumber) return `/admin/orders/${normalized.orderNumber}`;
+    if (normalized.page === 'admin') return '/admin';
+    if (normalized.page === 'shop' && normalized.filter?.category) return `/category/${normalized.filter.category}`;
+    if (normalized.page === 'shop' && normalized.filter?.type) return `/segment/${normalized.filter.type}`;
+    if (normalized.page === 'shop') return '/shop';
+    if (normalized.page === 'checkout') return '/checkout';
+    if (normalized.page === 'orders') return '/orders';
+    if (normalized.page === 'wishlist') return '/wishlist';
+    return null;
+  }
+
+  switch (normalized) {
+    case 'home':
+      return '/';
+    case 'shop':
+      return '/shop';
+    case 'wishlist':
+      return '/wishlist';
+    case 'checkout':
+      return '/checkout';
+    case 'orders':
+      return '/orders';
+    case 'admin':
+      return '/admin';
+    default:
+      return null;
+  }
+};
+
 // ============== STORE CONTEXT ==============
 const useStore = () => {
   const [user, setUser] = useState(null);
   const [cart, setCart] = useState({ items: [], total: 0 });
   const [wishlist, setWishlist] = useState([]);
   const [products, setProducts] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,6 +101,7 @@ const useStore = () => {
       fetchWishlist(userData.id);
     }
     fetchProducts();
+    fetchSettings();
     seedDatabase();
   }, []);
 
@@ -89,6 +131,14 @@ const useStore = () => {
       const res = await fetch(`/api/wishlist/${userId}`);
       const data = await res.json();
       setWishlist(data.wishlist?.items || []);
+    } catch (e) { console.error('Error:', e); }
+  };
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch('/api/settings');
+      const data = await res.json();
+      setSettings(data.settings || null);
     } catch (e) { console.error('Error:', e); }
   };
 
@@ -175,9 +225,9 @@ const useStore = () => {
   };
 
   return {
-    user, cart, wishlist, products, loading,
+    user, cart, wishlist, products, settings, loading,
     login, logout, addToCart, removeFromCart, updateCartQuantity, toggleWishlist,
-    setCart, fetchProducts, fetchCart
+    setCart, fetchProducts, fetchCart, fetchSettings
   };
 };
 
@@ -443,6 +493,8 @@ const ProductCard = ({ product, onClick, onWishlist, isWishlisted, index }) => {
 
 const HomePage = ({ store, setCurrentPage }) => {
   const featuredProducts = store.products.filter(p => p.featured).slice(0, 4);
+  const cms = store.settings?.cms || {};
+  const storeConfig = store.settings?.store || {};
   const categories = [
     { id: 'plain', name: 'Plain', subtitle: 'Timeless Essentials', image: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600' },
     { id: 'printed', name: 'Printed', subtitle: 'Artful Expression', image: 'https://images.unsplash.com/photo-1503341504253-dff4815485f1?w=600' },
@@ -453,14 +505,14 @@ const HomePage = ({ store, setCurrentPage }) => {
     <div className="overflow-hidden">
       <section className="relative h-screen">
         <div className="absolute inset-0">
-          <img src="https://images.unsplash.com/photo-1611042553484-d61f84d22784?w=1920" alt="Hero" className="w-full h-full object-cover" />
+          <img src={cms.heroImage || 'https://images.unsplash.com/photo-1611042553484-d61f84d22784?w=1920'} alt="Hero" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-black/30" />
         </div>
         <div className="relative h-full container mx-auto px-6 lg:px-12 flex items-center">
           <div className="max-w-2xl text-white">
-            <motion.p initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="text-[11px] tracking-[0.4em] uppercase mb-6 text-white/70">New Collection 2025</motion.p>
-            <motion.h2 initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="text-5xl md:text-7xl lg:text-8xl font-serif leading-[0.9] mb-8">Wear Your<br />Identity</motion.h2>
-            <motion.p initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }} className="text-lg text-white/70 mb-10 max-w-md">Premium quality t-shirts designed for minimal aesthetics and superior comfort.</motion.p>
+            <motion.p initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="text-[11px] tracking-[0.4em] uppercase mb-6 text-white/70">{cms.heroBadge || 'New Collection 2025'}</motion.p>
+            <motion.h2 initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="text-5xl md:text-7xl lg:text-8xl font-serif leading-[0.9] mb-8 whitespace-pre-line">{cms.heroTitle || 'Wear Your Identity'}</motion.h2>
+            <motion.p initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }} className="text-lg text-white/70 mb-10 max-w-md">{cms.heroSubtitle || 'Premium quality t-shirts designed for minimal aesthetics and superior comfort.'}</motion.p>
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}>
               <Button size="lg" className="h-14 px-10 bg-white text-black hover:bg-white/90 rounded-none text-[12px] tracking-[0.2em]" onClick={() => setCurrentPage('shop')}>
                 SHOP COLLECTION <ArrowRight className="ml-3" size={16} />
@@ -483,7 +535,7 @@ const HomePage = ({ store, setCurrentPage }) => {
       <section className="py-24 lg:py-32 container mx-auto px-6 lg:px-12">
         <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInUp} className="text-center mb-16">
           <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Categories</p>
-          <h3 className="text-3xl md:text-5xl font-serif">Shop by Style</h3>
+          <h3 className="text-3xl md:text-5xl font-serif">{cms.categoryHeading || 'Shop by Style'}</h3>
         </motion.div>
         <div className="grid md:grid-cols-3 gap-6 lg:gap-8">
           {categories.map((cat, idx) => (
@@ -507,7 +559,7 @@ const HomePage = ({ store, setCurrentPage }) => {
           <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInUp} className="flex flex-col md:flex-row justify-between items-start md:items-end mb-16">
             <div>
               <p className="text-[11px] tracking-[0.4em] uppercase text-black/40 mb-4">Selection</p>
-              <h3 className="text-3xl md:text-5xl font-serif">Featured Pieces</h3>
+              <h3 className="text-3xl md:text-5xl font-serif">{cms.featuredHeading || 'Featured Pieces'}</h3>
             </div>
             <motion.button whileHover={{ x: 5 }} onClick={() => setCurrentPage('shop')} className="mt-6 md:mt-0 text-[12px] tracking-[0.15em] uppercase flex items-center gap-3">View All <ArrowRight size={14} /></motion.button>
           </motion.div>
@@ -523,10 +575,10 @@ const HomePage = ({ store, setCurrentPage }) => {
         <div className="container mx-auto px-6 lg:px-12">
           <div className="grid md:grid-cols-4 gap-12 mb-16">
             <div className="md:col-span-2">
-              <h4 className="text-2xl tracking-[0.2em] font-medium mb-6">SEVENGHOST</h4>
-              <p className="text-white/50 text-sm leading-relaxed max-w-sm mb-8">Premium fashion for the modern individual.</p>
+              <h4 className="text-2xl tracking-[0.2em] font-medium mb-6">{storeConfig.name || 'SEVENGHOST'}</h4>
+              <p className="text-white/50 text-sm leading-relaxed max-w-sm mb-8">{cms.footerBlurb || 'Premium fashion for the modern individual.'}</p>
               <div className="flex gap-2">
-                <Input placeholder="Email" className="bg-white/10 border-white/20 text-white rounded-none h-12" />
+                <Input placeholder={cms.footerEmailPlaceholder || 'Email'} className="bg-white/10 border-white/20 text-white rounded-none h-12" />
                 <Button className="h-12 px-6 rounded-none">JOIN</Button>
               </div>
             </div>
@@ -670,9 +722,16 @@ const ProductPage = ({ store, productId, setCurrentPage }) => {
 };
 
 const CheckoutPage = ({ store, setCurrentPage }) => {
-  const [address, setAddress] = useState({ name: '', phone: '', addressLine: '', city: '', state: '', pincode: '' });
+  const [address, setAddress] = useState({ name: '', email: store.user?.email || '', phone: '', addressLine: '', city: '', state: '', pincode: '' });
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setAddress((current) => ({
+      ...current,
+      email: current.email || store.user?.email || '',
+    }));
+  }, [store.user?.email]);
 
   const loadRazorpayScript = () => new Promise((resolve) => {
     if (window.Razorpay) { resolve(true); return; }
@@ -684,7 +743,7 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
   });
 
   const handlePlaceOrder = async () => {
-    if (!address.name || !address.phone || !address.addressLine || !address.city || !address.pincode) { toast.error('Fill all fields'); return; }
+    if (!address.name || !address.email || !address.phone || !address.addressLine || !address.city || !address.pincode) { toast.error('Fill all fields'); return; }
     setLoading(true);
     try {
       if (paymentMethod === 'razorpay') {
@@ -804,6 +863,7 @@ const CheckoutPage = ({ store, setCurrentPage }) => {
               <h2 className="text-[11px] tracking-[0.2em] uppercase mb-6">Delivery Address</h2>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div><label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Name</label><Input value={address.name} onChange={(e) => setAddress({...address, name: e.target.value})} className="mt-2 rounded-none h-12" /></div>
+                <div><label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Email</label><Input type="email" value={address.email} onChange={(e) => setAddress({...address, email: e.target.value})} className="mt-2 rounded-none h-12" /></div>
                 <div><label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Phone</label><Input value={address.phone} onChange={(e) => setAddress({...address, phone: e.target.value})} className="mt-2 rounded-none h-12" /></div>
                 <div className="sm:col-span-2"><label className="text-[10px] tracking-[0.15em] uppercase text-black/50">Address</label><Input value={address.addressLine} onChange={(e) => setAddress({...address, addressLine: e.target.value})} className="mt-2 rounded-none h-12" /></div>
                 <div><label className="text-[10px] tracking-[0.15em] uppercase text-black/50">City</label><Input value={address.city} onChange={(e) => setAddress({...address, city: e.target.value})} className="mt-2 rounded-none h-12" /></div>
@@ -873,8 +933,8 @@ const WishlistPage = ({ store, setCurrentPage }) => {
 
 // ============== ADMIN PANEL ==============
 
-const AdminPanel = ({ store, setCurrentPage }) => {
-  const [activeTab, setActiveTab] = useState('dashboard');
+const AdminPanel = ({ store, setCurrentPage, initialTab = 'dashboard', initialOrderNumber = null }) => {
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -894,6 +954,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
   const [orderSearch, setOrderSearch] = useState('');
 
   useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { setActiveTab(initialTab || 'dashboard'); }, [initialTab]);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -963,6 +1024,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
       if (result.success) {
         toast.success('Settings saved!');
         fetchAll();
+        store.fetchSettings?.();
       }
     } catch (e) { toast.error('Failed'); }
   };
@@ -1001,6 +1063,16 @@ const AdminPanel = ({ store, setCurrentPage }) => {
     return 'PAID';
   };
   const orderAddressLines = (address = {}) => [address.address, address.city, address.state, address.pincode].filter(Boolean);
+  const shortId = (value) => value ? `${String(value).slice(0, 8).toUpperCase()}` : '-';
+
+  useEffect(() => {
+    if (!initialOrderNumber || orders.length === 0) return;
+    const matchedOrder = orders.find((order) => orderDisplayId(order) === initialOrderNumber);
+    if (matchedOrder) {
+      setSelectedOrder(matchedOrder);
+      setActiveTab('orders');
+    }
+  }, [initialOrderNumber, orders]);
 
   if (store.user?.role !== 'admin') {
     return <div className="min-h-screen flex items-center justify-center"><p className="text-black/40">Access denied. Admin only.</p></div>;
@@ -1011,6 +1083,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
     { id: 'products', label: 'Products', icon: Box },
     { id: 'orders', label: 'Orders', icon: Package },
     { id: 'users', label: 'Users', icon: Users },
+    { id: 'cms', label: 'CMS', icon: FileText },
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
 
@@ -1064,7 +1137,12 @@ const AdminPanel = ({ store, setCurrentPage }) => {
         </header>
 
         <div className="p-8">
-          <Dialog open={!!selectedOrder} onOpenChange={(open) => { if (!open) setSelectedOrder(null); }}>
+          <Dialog open={!!selectedOrder} onOpenChange={(open) => {
+            if (!open) {
+              setSelectedOrder(null);
+              if (initialOrderNumber) setCurrentPage({ page: 'admin', tab: 'orders' });
+            }
+          }}>
             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               {selectedOrder && (
                 <>
@@ -1124,8 +1202,8 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                           <div className="flex items-start gap-3">
                             <FileText size={16} className="mt-0.5 text-black/40" />
                             <div>
-                              <p className="font-medium">Database ID</p>
-                              <p className="text-black/50 break-all">{selectedOrder.id}</p>
+                              <p className="font-medium">Order Reference</p>
+                              <p className="text-black/50">#{orderDisplayId(selectedOrder)}</p>
                             </div>
                           </div>
                         </CardContent>
@@ -1140,14 +1218,14 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                             <User size={16} className="mt-0.5 text-black/40" />
                             <div>
                               <p className="font-medium">{selectedOrder.userName || selectedOrder.address?.name || 'Guest Customer'}</p>
-                              <p className="text-black/50">User ID: {selectedOrder.userId || '-'}</p>
+                              <p className="text-black/50">User ID: {shortId(selectedOrder.userId)}</p>
                             </div>
                           </div>
                           <div className="flex items-start gap-3">
                             <Mail size={16} className="mt-0.5 text-black/40" />
                             <div>
                               <p className="font-medium">Email</p>
-                              <p className="text-black/50 break-all">{selectedOrder.userEmail || selectedOrder.address?.email || '-'}</p>
+                              <p className="text-black/50 break-all">{(selectedOrder.userEmail && selectedOrder.userEmail !== 'guest' ? selectedOrder.userEmail : selectedOrder.address?.email) || '-'}</p>
                             </div>
                           </div>
                           <div className="flex items-start gap-3">
@@ -1268,7 +1346,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                         {(stats?.recentOrders || []).map((order) => (
                           <tr key={order.id} className="border-b hover:bg-black/5">
                             <td className="py-3 px-4 text-sm font-medium">
-                              <button onClick={() => setSelectedOrder(order)} className="hover:underline underline-offset-4">
+                              <button onClick={() => setCurrentPage({ page: 'admin', tab: 'orders', orderNumber: orderDisplayId(order) })} className="hover:underline underline-offset-4">
                                 #{orderDisplayId(order)}
                               </button>
                             </td>
@@ -1380,7 +1458,7 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                         {filteredOrders.map((order) => (
                           <tr key={order.id} className="border-b hover:bg-black/5">
                             <td className="py-4 px-6 font-medium text-sm">
-                              <button onClick={() => setSelectedOrder(order)} className="hover:underline underline-offset-4">
+                              <button onClick={() => setCurrentPage({ page: 'admin', tab: 'orders', orderNumber: orderDisplayId(order) })} className="hover:underline underline-offset-4">
                                 #{orderDisplayId(order)}
                               </button>
                             </td>
@@ -1454,6 +1532,40 @@ const AdminPanel = ({ store, setCurrentPage }) => {
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* CMS */}
+          {activeTab === 'cms' && (
+            <div className="max-w-4xl space-y-8">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center"><FileText className="text-slate-700" size={20} /></div>
+                    <div>
+                      <CardTitle className="text-lg">Homepage CMS</CardTitle>
+                      <CardDescription>Edit storefront copy and hero content without touching code</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <SettingsForm
+                    fields={[
+                      { key: 'heroBadge', label: 'Hero Badge', placeholder: 'New Collection 2025' },
+                      { key: 'heroTitle', label: 'Hero Title', placeholder: 'Wear Your Identity' },
+                      { key: 'heroSubtitle', label: 'Hero Subtitle', placeholder: 'Premium quality t-shirts designed for minimal aesthetics and superior comfort.' },
+                      { key: 'heroImage', label: 'Hero Image URL', placeholder: 'https://images.unsplash.com/...' },
+                      { key: 'categoryHeading', label: 'Category Section Heading', placeholder: 'Shop by Style' },
+                      { key: 'featuredHeading', label: 'Featured Section Heading', placeholder: 'Featured Pieces' },
+                      { key: 'footerBlurb', label: 'Footer Blurb', placeholder: 'Premium fashion for the modern individual.' },
+                      { key: 'footerEmailPlaceholder', label: 'Footer Email Placeholder', placeholder: 'Email' },
+                      { key: 'footerCopyright', label: 'Footer Copyright', placeholder: '© 2025 SevenGhost. All rights reserved.' }
+                    ]}
+                    initialData={settings?.cms || {}}
+                    onSave={(data) => handleSaveSettings('cms', data)}
+                  />
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* Settings */}
@@ -1658,6 +1770,10 @@ const SettingsForm = ({ fields, initialData, onSave }) => {
   const [data, setData] = useState(initialData);
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    setData(initialData || {});
+  }, [initialData]);
+
   const handleSave = async () => {
     setSaving(true);
     await onSave(data);
@@ -1709,12 +1825,26 @@ const MobileNav = ({ currentPage, setCurrentPage, store, setShowAuth }) => (
 );
 
 // ============== MAIN APP ==============
-export default function App() {
+export function StorefrontApp({ initialPage = 'home' }) {
   const store = useStore();
-  const [currentPage, setCurrentPage] = useState('home');
+  const router = useRouter();
+  const pathname = usePathname();
+  const [currentPage, setCurrentPage] = useState(() => normalizePage(initialPage));
   const [showAuth, setShowAuth] = useState(false);
 
-  const handleSetCurrentPage = (page) => { setCurrentPage(page); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  useEffect(() => {
+    setCurrentPage(normalizePage(initialPage));
+  }, [initialPage]);
+
+  const handleSetCurrentPage = (page) => {
+    const normalizedPage = normalizePage(page);
+    const targetRoute = routeForPage(normalizedPage);
+    setCurrentPage(normalizedPage);
+    if (targetRoute && targetRoute !== pathname) {
+      router.push(targetRoute);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const renderPage = () => {
     const page = typeof currentPage === 'object' ? currentPage.page : currentPage;
@@ -1724,7 +1854,7 @@ export default function App() {
       case 'checkout': return <CheckoutPage store={store} setCurrentPage={handleSetCurrentPage} />;
       case 'orders': return <OrdersPage store={store} setCurrentPage={handleSetCurrentPage} />;
       case 'wishlist': return <WishlistPage store={store} setCurrentPage={handleSetCurrentPage} />;
-      case 'admin': return <AdminPanel store={store} setCurrentPage={handleSetCurrentPage} />;
+      case 'admin': return <AdminPanel store={store} setCurrentPage={handleSetCurrentPage} initialTab={currentPage.tab} initialOrderNumber={currentPage.orderNumber} />;
       default: return <HomePage store={store} setCurrentPage={handleSetCurrentPage} />;
     }
   };
@@ -1748,4 +1878,8 @@ export default function App() {
       <AnimatePresence>{showAuth && <AuthModal show={showAuth} onClose={() => setShowAuth(false)} store={store} />}</AnimatePresence>
     </div>
   );
+}
+
+export default function App() {
+  return <StorefrontApp initialPage="home" />;
 }
